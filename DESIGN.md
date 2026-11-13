@@ -1,6 +1,6 @@
 ---
 name: Agent Autoloop
-description: 发射线谱栏 — 炭灰连续谱上以线形记状态、以波长记身份的中台总览与拍板界面
+description: 像素小镇工作台与谱线大屏，共用真实中台状态和任务详情
 colors:
   charcoal-base: "#191b1c"
   charcoal-input: "#1e2122"
@@ -82,6 +82,8 @@ components:
 # Design System: Agent Autoloop
 
 ## Overview
+
+本分支首页采用像素小镇：派单站、议事厅、工坊、档案馆、灯塔对应真实队列、卡片、Agent、历史和通知。地图素材随构建打包，数字和动画由中台状态驱动；窄屏点击建筑后聚焦详情。下面的谱线规范适用于可展开的运行谱线、详情和大屏，不再限制首页只能使用谱线。小镇样式在 town.css，业务列表在 workbench.css；三者共用单一会话和操作接口，见[系统架构](docs/workbench-architecture.md)。
 
 **Creative North Star: "发射线谱栏（The Emission-line Rail）"**
 

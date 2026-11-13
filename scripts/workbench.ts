@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -6,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
-import { promisify } from "node:util";
+import { bootcampIntake, IntakeError } from "./workbench/intake.ts";
 
 const DIST = join(import.meta.dirname, "..", "web", "dist");
 const HOST = "127.0.0.1";
@@ -20,7 +19,6 @@ const HEADERS = {
 const RUN = /^\/v1\/runs\/[1-9]\d*\/(why|cancel)$/;
 const CARD = /^\/v1\/cards\/[1-9]\d*\/(answer|resolve)$/;
 const RULE = /^\/v1\/rules\/[^/]+\/(pause|resume|run|replay)$/;
-const exec = promisify(execFile);
 
 function send(res: ServerResponse, status: number, body: string | Buffer, type = "application/json") {
   res.writeHead(status, {
@@ -41,22 +39,6 @@ function authorized(request: IncomingMessage, token: string) {
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 
-function feishuLink(input: unknown) {
-  if (typeof input !== "string" || input.length > 2048) return false;
-  try {
-    const url = new URL(input);
-    return (
-      url.protocol === "https:" &&
-      !url.username &&
-      !url.password &&
-      !url.port &&
-      /(^|\.)(feishu\.cn|larksuite\.com)$/.test(url.hostname)
-    );
-  } catch {
-    return false;
-  }
-}
-
 type Options = {
   home: string;
   port: number;
@@ -65,6 +47,7 @@ type Options = {
 };
 
 export function serveWorkbench({ home, port, token, bootcamp = false }: Options) {
+  const intake = bootcamp ? bootcampIntake(home) : undefined;
   async function call(path: string, signal: AbortSignal, body?: string) {
     const config = JSON.parse(await readFile(join(home, "config.json"), "utf8"));
     const endpoint = new URL(config.url);
@@ -185,36 +168,18 @@ export function serveWorkbench({ home, port, token, bootcamp = false }: Options)
         }
         body = Buffer.concat(chunks).toString("utf8") || "{}";
       }
-      if (path === "/local/bootcamp") {
-        let input: { link?: string; plan?: string };
+      if (path === "/local/bootcamp" && intake) {
+        let input: unknown;
         try {
           input = JSON.parse(body!);
-          if (!feishuLink(input?.link) || (input.plan && !feishuLink(input.plan))) throw new Error("Invalid link");
         } catch {
-          return error(res, 400, "请填写有效的 HTTPS 飞书任务或方案文档链接。");
+          return error(res, 400, "提交内容格式不正确。");
         }
         try {
-          const { stdout } = await exec(
-            "pwsh.exe",
-            [
-              "-NoLogo",
-              "-NoProfile",
-              "-NonInteractive",
-              "-File",
-              join(home, "Submit-Bootcamp.ps1"),
-              "-Link",
-              input.link!,
-              ...(input.plan ? ["-PlanLink", input.plan] : []),
-            ],
-            { windowsHide: true, timeout: 90_000 },
-          );
-          const message = stdout.trim();
-          if (!/^交给了[：:]/m.test(message)) {
-            return error(res, 409, message.split(/\r?\n/, 1)[0] || "当前没有规则接收实训营任务。");
-          }
-          return send(res, 200, JSON.stringify({ message }));
-        } catch {
-          return error(res, 502, "飞书任务未确认接单。请核对当前飞书登录和链接访问权限；任务有多份方案时请指定一份。");
+          return send(res, 200, JSON.stringify(await intake(input)));
+        } catch (failure) {
+          if (failure instanceof IntakeError) return error(res, failure.status, failure.message);
+          throw failure;
         }
       }
       const upstream = await call(path + url.search, AbortSignal.any([gone.signal, AbortSignal.timeout(6000)]), body);

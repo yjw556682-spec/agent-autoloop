@@ -2,7 +2,7 @@
 import { computed, defineComponent } from "vue";
 import { connected, state } from "./session";
 import { marksOf } from "./rail";
-import { openMarkPlate } from "./overview";
+import { openMarkPlate } from "./selection";
 import { Readouts } from "./workbench";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));

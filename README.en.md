@@ -8,6 +8,8 @@
 
 ![Architecture](docs/architecture.en.svg)
 
+This branch also provides a local pixel-town workbench that can connect to an existing hub without replacing it. See the [workbench guide](docs/workbench.md) and [deployment architecture and compatibility matrix](docs/workbench-architecture.md) (Chinese).
+
 ## What problem does it solve?
 
 Most of us use command-line agents like Claude Code or Codex by babysitting a terminal: you type a prompt, watch it run, and answer its questions. Close the window or walk away, and the work stops.

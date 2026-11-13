@@ -1,5 +1,7 @@
 // Talking to the hub as its owner: one key, the doors from the 本人 section of the protocol, and the log as a stream.
 import { ref } from "vue";
+import { createTransport } from "./transport";
+export { HubError } from "./transport";
 
 const KEY_STORE = "agent-autoloop.owner-key";
 declare global {
@@ -95,17 +97,8 @@ export type State = {
 
 export type Fact = { seq: number; at: string; type: string; changes: { table: string; key: string; row: any }[] };
 
-export class HubError extends Error {
-  constructor(
-    readonly status: number,
-    message: string,
-  ) {
-    super(message);
-  }
-}
-
 export const key = ref(keyStore.getItem(KEY_STORE) ?? "");
-export const connected = ref(true);
+export const connected = ref(false);
 
 export function setKey(value: string) {
   key.value = value;
@@ -113,25 +106,14 @@ export function setKey(value: string) {
   else keyStore.removeItem(KEY_STORE);
 }
 
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const answer = await fetch(path, {
-    ...init,
-    headers: { ...(init?.headers ?? {}), ...(key.value && { authorization: `Bearer ${key.value}` }) },
-  });
-  if (!answer.ok) {
-    const text = await answer.text().catch(() => "");
-    let message = text;
-    try {
-      message = JSON.parse(text).error ?? text;
-    } catch {}
-    if (answer.status === 401 && key.value) setKey("");
-    throw new HubError(answer.status, message || `中台没有答应（${answer.status}）`);
-  }
-  return answer.json() as Promise<T>;
-}
+const { call, stream: openStream } = createTransport(
+  () => key.value,
+  () => setKey(""),
+);
+export { openStream };
 
-export const fetchState = (before?: number) =>
-  call<State>(before === undefined ? "/v1/state" : `/v1/state?before=${before}`);
+export const fetchState = (before?: number, signal?: AbortSignal) =>
+  call<State>(before === undefined ? "/v1/state" : `/v1/state?before=${before}`, { signal });
 export const fetchWhy = (run: number) => call<Fact[]>(`/v1/runs/${run}/why`);
 export const emitEvent = (event: { id: string; type: string; subject?: string; summary?: string }) =>
   call<{ event: number; duplicate: boolean; routed: string[] }>("/v1/emit", {
@@ -147,12 +129,16 @@ export const answerCard = (id: number, body: { choice?: number; text?: string })
   });
 export const cancelRun = (id: number) => call<{ ok: boolean }>(`/v1/runs/${id}/cancel`, { method: "POST" });
 
-function post<T>(path: string, body: object) {
-  return call<T>(path, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
+function post<T>(path: string, body: object, timeout?: number) {
+  return call<T>(
+    path,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    },
+    timeout,
+  );
 }
 
 export const resolveCard = (id: number, reason: string) =>
@@ -163,62 +149,4 @@ export const controlRule = (name: string, action: "run" | "pause" | "resume" | "
     body,
   );
 export const submitBootcamp = (link: string, plan: string) =>
-  post<{ message: string }>("/local/bootcamp", { link, plan });
-
-/**
- * The log as a stream, told over fetch so the owner key travels in a header (EventSource cannot send one). Reconnects
- * forever from the last sequence seen; onStatus(false) means the hub is not answering right now.
- */
-export function openStream(after: number, onFact: (fact: Fact) => void, onStatus: (up: boolean) => void) {
-  const controller = new AbortController();
-  let cursor = after;
-  let stopped = false;
-  const run = async () => {
-    let pause = 500;
-    while (!stopped) {
-      try {
-        const answer = await fetch(`/v1/stream?after=${cursor}`, {
-          headers: { authorization: `Bearer ${key.value}` },
-          signal: controller.signal,
-        });
-        if (answer.status === 401) {
-          if (key.value) setKey("");
-          return;
-        }
-        if (!answer.ok || !answer.body) throw new Error(String(answer.status));
-        onStatus(true);
-        pause = 500;
-        const reader = answer.body.pipeThrough(new TextDecoderStream()).getReader();
-        let frame = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          frame += value;
-          for (let end = frame.indexOf("\n\n"); end !== -1; end = frame.indexOf("\n\n")) {
-            const message = frame.slice(0, end);
-            frame = frame.slice(end + 2);
-            const data = message
-              .split("\n")
-              .filter((line) => line.startsWith("data: "))
-              .map((line) => line.slice(6))
-              .join("\n");
-            if (!data) continue;
-            const fact = JSON.parse(data) as Fact;
-            cursor = Math.max(cursor, fact.seq);
-            onFact(fact);
-          }
-        }
-      } catch (error) {
-        if (controller.signal.aborted || stopped) return;
-      }
-      onStatus(false);
-      await new Promise((resolve) => setTimeout(resolve, pause));
-      pause = Math.min(pause * 2, 15_000);
-    }
-  };
-  void run();
-  return () => {
-    stopped = true;
-    controller.abort();
-  };
-}
+  post<{ message: string }>("/local/bootcamp", { link, plan }, 95_000);

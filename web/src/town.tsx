@@ -1,7 +1,7 @@
 import { computed, defineComponent, ref, type PropType } from "vue";
 import type { RunView, State } from "./hub";
 import { connected } from "./session";
-import { runStatus } from "./workbench";
+import { runStatus } from "./run-status";
 
 const places = [
   { id: "dispatch", name: "派单站", icon: "▤" },
@@ -217,7 +217,7 @@ export const Town = defineComponent({
                     ))}
                     <div class="town-section-title">
                       <h3>接入方式</h3>
-                      <span>按中台版本</span>
+                      <span>配置与接入参考</span>
                     </div>
                     <div class="town-adapters">
                       {adapters.map(([use, label]) => (
@@ -227,12 +227,13 @@ export const Town = defineComponent({
                             {all.agents.some((agent) => agent.use === use)
                               ? "已配置"
                               : use === "zcode"
-                                ? "官方 1.8.2 支持"
-                                : "未配置"}
+                                ? "需核对中台版本"
+                                : "需安装并验证"}
                           </small>
                         </div>
                       ))}
                     </div>
+                    <p class="town-empty">在线表示接单程序已连接。模型登录和实际执行以试跑结果为准。</p>
                   </>
                 )}
                 {active.value === "archive" && (

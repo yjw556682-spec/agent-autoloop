@@ -1,12 +1,25 @@
 // The overview: one rail of lines, the plate that blooms above the selected one, the launch control, and the legend.
 // A run is a line whose form says its state; an open card is the sodium doublet waiting on you.
 import { computed, defineComponent, nextTick, reactive, ref, watch } from "vue";
-import { answerCard, cancelRun, emitEvent, fetchWhy, local, resolveCard, type CardView, type RunView } from "./hub";
+import {
+  answerCard,
+  cancelRun,
+  emitEvent,
+  fetchWhy,
+  key,
+  local,
+  resolveCard,
+  type CardView,
+  type RunView,
+} from "./hub";
 import { connected, loadError, refresh, state } from "./session";
 import { marksOf, type Mark } from "./rail";
 import { autoSubject, LaunchHelp } from "./launch-help";
 import { timelineOf } from "./why";
-import { Operations, Workbench, runStatus } from "./workbench";
+import { Operations, Workbench } from "./workbench";
+import { runStatus } from "./run-status";
+import { selected } from "./selection";
+import { createSubmission } from "./submission";
 import { Town } from "./town";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));
@@ -23,8 +36,6 @@ watch(marks, (now, was) => {
   if (fresh) setTimeout(() => landed.clear(), 700);
 });
 
-type Selected = { kind: "run" | "card"; id: number } | null;
-const selected = ref<Selected>(null);
 const historyRun = ref<RunView | null>(null);
 const detailZone = ref<HTMLElement | null>(null);
 const revealDetail = () => void nextTick(() => detailZone.value?.scrollIntoView({ block: "nearest" }));
@@ -88,19 +99,6 @@ const selectedRun = computed(() => {
 });
 watch([selectedCard, selectedRun], () => void nextTick(placePointer), { flush: "post" });
 
-/** The board's one interaction: a click there lands here with the plate already bloomed. */
-export function openMarkPlate(key: string) {
-  selected.value = key.startsWith("card:")
-    ? { kind: "card", id: Number(key.slice(5)) }
-    : { kind: "run", id: Number(key.slice(4)) };
-  const mark = marks.value.find((one) => one.key === key);
-  if (mark) {
-    if (mark.form === "waiting") dismissed.value = mark.id;
-    pointerColor.value = mark.form === "waiting" || mark.form === "notice" ? "var(--sodium)" : "var(--hair)";
-  }
-  void nextTick(() => (location.hash = "#/"));
-}
-
 /* ---------- answering: the sodium line hands its charge back to the rail ---------- */
 
 const busy = ref(false);
@@ -108,26 +106,38 @@ const words = ref("");
 const mistake = ref("");
 const resolving = ref(false);
 const feedback = ref("");
+let actionSession = 0;
 watch(selected, () => {
   words.value = mistake.value = "";
   resolving.value = false;
+  const mark = marks.value.find((one) => one.key === selected.value?.kind + ":" + selected.value?.id);
+  if (mark) {
+    if (mark.form === "waiting") dismissed.value = mark.id;
+    pointerColor.value = mark.form === "waiting" || mark.form === "notice" ? "var(--sodium)" : "var(--hair)";
+  }
 });
 
 const press = async (card: CardView, body: { choice?: number; text?: string }) => {
   if (busy.value) return;
   busy.value = true;
+  const session = actionSession;
+  const selection = selected.value;
   mistake.value = "";
   try {
     const result = resolving.value ? await resolveCard(card.id, body.text ?? "") : await answerCard(card.id, body);
+    if (session !== actionSession) return;
     feedback.value = result.changed ? "卡片 #" + card.id + " 已处理。" : "卡片 #" + card.id + " 已在其他地方处理。";
-    words.value = "";
-    selected.value = null;
-    dismissed.value = null;
+    if (selected.value === selection) {
+      words.value = "";
+      selected.value = null;
+      dismissed.value = null;
+    }
     await refresh();
   } catch (error) {
-    mistake.value = error instanceof Error ? error.message : "没答上，再试一次。";
+    if (session === actionSession && selected.value === selection)
+      mistake.value = error instanceof Error ? error.message : "没答上，再试一次。";
   }
-  busy.value = false;
+  if (session === actionSession) busy.value = false;
 };
 
 /* ---------- the run's plate: its own facts, told from the log ---------- */
@@ -172,15 +182,17 @@ const stopping = ref(false);
 const stop = async (run: RunView) => {
   if (stopping.value) return;
   stopping.value = true;
+  const session = actionSession;
   try {
     mistake.value = "";
     await cancelRun(run.id);
+    if (session !== actionSession) return;
     feedback.value = "已提交停止请求 · 第 " + run.id + " 轮。";
     await refresh();
   } catch (error) {
-    mistake.value = error instanceof Error ? error.message : "没停成。";
+    if (session === actionSession) mistake.value = error instanceof Error ? error.message : "没停成。";
   }
-  stopping.value = false;
+  if (session === actionSession) stopping.value = false;
 };
 
 /* ---------- launch ---------- */
@@ -188,7 +200,8 @@ const stop = async (run: RunView) => {
 // Types the person can pick: the manual door plus whatever the owner's own rules listen for.
 // A wildcard pattern like manual.* becomes a concrete default (manual.task) — the protocol
 // refuses "*" in a type, and the drop-down hands out real types only.
-const supportsEmit = computed(() => !local || (state.value?.lines ?? []).some((line) => line.source === "owner"));
+// This is an intake rule check, not runtime capability negotiation. Unsupported hubs return a clear API error.
+const hasManualIntake = computed(() => !local || (state.value?.lines ?? []).some((line) => line.source === "owner"));
 const typeOptions = computed(() => {
   const list = new Set<string>(["manual.task"]);
   for (const line of state.value?.lines ?? [])
@@ -211,20 +224,25 @@ const chatLaunch = (chatType: string, chatSubject: string, chatSummary: string) 
   summary.value = chatSummary;
   void launch();
 };
+const submission = createSubmission();
 const launch = async () => {
   if (!effectiveType.value || busy.value) return;
   busy.value = true;
+  const session = actionSession;
   noteBad.value = false;
   try {
-    const answer = await emitEvent({
-      id: crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-      type: effectiveType.value,
-      ...(subject.value.trim() && { subject: subject.value.trim() }),
-      ...(summary.value.trim() && { summary: summary.value.trim() }),
-    });
+    const answer = await emitEvent(
+      submission.prepare({
+        type: effectiveType.value,
+        ...(subject.value.trim() && { subject: subject.value.trim() }),
+        ...(summary.value.trim() && { summary: summary.value.trim() }),
+      }),
+    );
+    if (session !== actionSession) return;
+    submission.accepted();
     note.value = answer.routed.length
       ? `交给了：${answer.routed.join("、")}`
-      : "记下了，还没有规则接它。owner 来源只接 when.source 为 owner 的规则；类型从下拉框里选就一定有规则接。";
+      : "记下了，还没有规则接它。owner 来源只接 when.source 为 owner 的规则；请检查来源、事件类型及规则是否暂停。";
     noteBad.value = !answer.routed.length;
     typeChoice.value = typeOptions.value[0] ?? "manual.task";
     customType.value = "";
@@ -232,11 +250,30 @@ const launch = async () => {
     summary.value = "";
     await refresh();
   } catch (error) {
+    if (session !== actionSession) return;
     note.value = error instanceof Error ? error.message : "没发出去。";
     noteBad.value = true;
   }
   busy.value = false;
 };
+
+watch(
+  key,
+  () => {
+    actionSession++;
+    logRequest++;
+    selected.value = historyRun.value = null;
+    dismissed.value = null;
+    words.value = mistake.value = feedback.value = note.value = summary.value = customType.value = logError.value = "";
+    busy.value = stopping.value = resolving.value = showing.value = logLoading.value = noteBad.value = false;
+    lines.value = [];
+    landed.clear();
+    subject.value = autoSubject();
+    typeChoice.value = "manual.task";
+    submission.accepted();
+  },
+  { flush: "sync" },
+);
 
 /* ---------- 发射记录: the person's own launched tasks, newest first, one tap to the plate ---------- */
 
@@ -311,7 +348,7 @@ export const Overview = defineComponent({
                 snapshot={all}
                 openRun={openRun}
                 openCard={openCard}
-                manualIntake={supportsEmit.value}
+                manualIntake={hasManualIntake.value}
                 bootcampIntake={Boolean(
                   local?.bootcamp && all.lines.some((line) => line.types.includes("bootcamp.draft.requested")),
                 )}
@@ -555,7 +592,7 @@ export const Overview = defineComponent({
               />
             )}
             {all && <Operations snapshot={all} />}
-            {supportsEmit.value && (
+            {hasManualIntake.value && (
               <div class="launch" id="manual-event" tabindex="-1">
                 <select
                   class="word type"

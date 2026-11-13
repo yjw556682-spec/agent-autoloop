@@ -7,6 +7,8 @@ description: 配置 Agent 自动化中台：加规则、接新的事件插件、
 
 协议全文在 `docs/protocol.md`，这里是怎么做。程序在 `~/.agent-autoloop/app`，规则在 `~/.agent-autoloop/rules.json`，配置和密钥在 `~/.agent-autoloop/config.json`。
 
+此分支可单独启动小镇工作台连接已有中台，见 `docs/workbench.md` 和 `docs/workbench-architecture.md`。先核对实际中台版本；工坊列出接入方式不表示已安装或授权，“在线”仅证明接单程序近期连接过。新增 Agent 仍需规则校验和实际试跑。
+
 ## 看情况、回答
 
 `agent-autoloop status` 列出谁在线、等用户什么、在做什么、做过什么，还有按完成时间统计的今天和最近 7 天的轮数、Token 和费用（同一轮重试的已报用量相加，没上报的轮数会写出来）。`agent-autoloop status --json` 输出 `/v1/state` 的原样结构，给脚本和看板用。`agent-autoloop answer <卡片> <序号>` 回答，`agent-autoloop resolve <卡片> <结果>` 结案，`agent-autoloop stop <第几轮>` 停掉一轮，等整个进程组退出才报告已停。
