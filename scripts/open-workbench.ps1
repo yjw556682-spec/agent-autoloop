@@ -1,4 +1,4 @@
-param([switch]$Bootcamp, [switch]$NoBrowser)
+﻿param([switch]$Bootcamp, [switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 $homeDir = if ($env:AGENT_AUTOLOOP_HOME) { $env:AGENT_AUTOLOOP_HOME } else { Join-Path $env:USERPROFILE '.agent-autoloop' }
 $port = if ($env:AUTOLOOP_WORKBENCH_PORT) { [int]$env:AUTOLOOP_WORKBENCH_PORT } else { 3351 }

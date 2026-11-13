@@ -13,6 +13,8 @@
 body:has(.console, .board) {
   background: radial-gradient(ellipse at 25% 0%, #252b34 0, transparent 55%), #141619;
 }
+.console.lost, .board.lost { grid-template-rows: auto auto 1fr auto; }
+.console .banner, .board .banner { margin: 12px 0 0; border-color: var(--edge); }
 .console .bar, .board .bar {
   align-items: center;
   padding: 4px 0 17px;
