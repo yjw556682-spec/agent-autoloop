@@ -254,7 +254,7 @@ const launch = async () => {
     note.value = error instanceof Error ? error.message : "没发出去。";
     noteBad.value = true;
   }
-  busy.value = false;
+  if (session === actionSession) busy.value = false;
 };
 
 watch(
