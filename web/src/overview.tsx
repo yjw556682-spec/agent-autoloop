@@ -6,7 +6,8 @@ import { connected, loadError, refresh, state } from "./session";
 import { marksOf, type Mark } from "./rail";
 import { autoSubject, LaunchHelp } from "./launch-help";
 import { timelineOf } from "./why";
-import { Operations, Readouts, Workbench, runStatus } from "./workbench";
+import { Operations, Workbench, runStatus } from "./workbench";
+import { Town } from "./town";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));
 
@@ -30,6 +31,7 @@ const revealDetail = () => void nextTick(() => detailZone.value?.scrollIntoView(
 const railEl = ref<HTMLElement | null>(null);
 const pointer = ref(50);
 const pointerColor = ref("var(--hair)");
+const showSpectrum = ref(false);
 // The waiting card blooms on its own until the person sends it away; a different waiting card earns the attention back.
 const dismissed = ref<number | null>(null);
 
@@ -271,21 +273,17 @@ export const Overview = defineComponent({
       const card = selectedCard.value;
       const run = selectedRun.value;
       return (
-        <div class={["shell", "console", !connected.value && "lost"]}>
+        <div class={["shell", "console", "town-console", !connected.value && "lost"]}>
           <header class="bar">
             <a class="brand" href="#/">
               <span aria-hidden="true" class="brand-spectrum" />
               <span class="name">Agent Autoloop</span>
             </a>
             <div class="facts">
-              <span>
-                <span class={["dot", connected.value ? "on" : "off"]} />
-                {connected.value ? "中台在线" : "连不上，重试中"}
-              </span>
               {all && (
                 <>
                   <a class="board-link" href="#/board">
-                    打开大屏 <span aria-hidden="true">↗</span>
+                    谱线大屏 <span aria-hidden="true">↗</span>
                   </a>
                 </>
               )}
@@ -298,24 +296,41 @@ export const Overview = defineComponent({
           )}
           <main class="stage">
             <div class="console-title">
-              <h1>运行总览</h1>
-              {all && <span>近 7 天 {money(all.spending.week.cost)}</span>}
+              <div>
+                <h1>Autoloop 小镇</h1>
+                <p>从任务进站，到 Agent 接手和回报</p>
+              </div>
+              {all && (
+                <span>
+                  今日完成 <b>{all.totals.doneToday}</b> · 近 7 天 {money(all.spending.week.cost)}
+                </span>
+              )}
             </div>
-            {all && <Readouts snapshot={all} />}
+            {all && (
+              <Town
+                snapshot={all}
+                openRun={openRun}
+                openCard={openCard}
+                manualIntake={supportsEmit.value}
+                bootcampIntake={Boolean(
+                  local?.bootcamp && all.lines.some((line) => line.types.includes("bootcamp.draft.requested")),
+                )}
+              />
+            )}
             {!all && (
               <p class="bench-empty" role="status">
                 {loadError.value || "正在读取中台…"}
               </p>
             )}
-            <section class="spectrum-panel" aria-label="运行谱线">
-              <div class="spectrum-head">
-                <h2>运行谱线</h2>
-                <div>
-                  <span>实线 · 进行中</span>
-                  <span>短线 · 历史</span>
-                  <span class="legend-attention">双线 · 待回复</span>
-                </div>
-              </div>
+            <section class={["spectrum-panel", "town-detail"]} aria-label="运行详情及谱线">
+              <button
+                class="spectrum-toggle"
+                aria-expanded={showSpectrum.value}
+                aria-controls="overview-spectrum"
+                onClick={() => (showSpectrum.value = !showSpectrum.value)}
+              >
+                {showSpectrum.value ? "收起运行谱线" : "展开运行谱线"}
+              </button>
               <div ref={detailZone} class={["plate-zone", !(card || run || showHelp.value) && "plate-empty"]}>
                 {card && (
                   <div
@@ -490,33 +505,40 @@ export const Overview = defineComponent({
                 )}
                 {showHelp.value && <LaunchHelp options={typeOptions.value} onLaunch={chatLaunch} />}
               </div>
-              {all && marks.value.length === 0 && <p class="bench-empty spectrum-empty">还没有运行记录。</p>}
-              <div class="rail-wrap">
-                <div class="rail" ref={railEl}>
-                  {marks.value.map((mark) => (
-                    <button
-                      key={mark.key}
-                      data-key={mark.key}
-                      class={[
-                        "rail-line",
-                        selected.value && `${selected.value.kind}:${selected.value.id}` === mark.key && "selected",
-                      ]}
-                      title={mark.title}
-                      aria-label={`${mark.rule} ${mark.label} ${mark.title !== mark.rule ? mark.title : ""}`}
-                      onClick={() => choose(mark)}
-                    >
-                      <span class="stem-slot">
-                        <span
-                          class={["stem", mark.form, landed.has(mark.key) && "land"]}
-                          style={{ "--wl": mark.wl } as any}
-                        />
-                        {mark.form === "waiting" && <span class="stem waiting" aria-hidden="true" />}
-                      </span>
-                      <span class="rail-tag">{mark.label}</span>
-                    </button>
-                  ))}
+              <div id="overview-spectrum" hidden={!showSpectrum.value}>
+                <div class="spectrum-head">
+                  <span>实线 · 进行中</span>
+                  <span>短线 · 历史</span>
+                  <span class="legend-attention">双线 · 待回复</span>
                 </div>
-                <div class="baseline" />
+                {all && marks.value.length === 0 && <p class="bench-empty spectrum-empty">还没有运行记录。</p>}
+                <div class="rail-wrap">
+                  <div class="rail" ref={railEl}>
+                    {marks.value.map((mark) => (
+                      <button
+                        key={mark.key}
+                        data-key={mark.key}
+                        class={[
+                          "rail-line",
+                          selected.value && `${selected.value.kind}:${selected.value.id}` === mark.key && "selected",
+                        ]}
+                        title={mark.title}
+                        aria-label={`${mark.rule} ${mark.label} ${mark.title !== mark.rule ? mark.title : ""}`}
+                        onClick={() => choose(mark)}
+                      >
+                        <span class="stem-slot">
+                          <span
+                            class={["stem", mark.form, landed.has(mark.key) && "land"]}
+                            style={{ "--wl": mark.wl } as any}
+                          />
+                          {mark.form === "waiting" && <span class="stem waiting" aria-hidden="true" />}
+                        </span>
+                        <span class="rail-tag">{mark.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div class="baseline" />
+                </div>
               </div>
             </section>
             {feedback.value && (
@@ -534,7 +556,7 @@ export const Overview = defineComponent({
             )}
             {all && <Operations snapshot={all} />}
             {supportsEmit.value && (
-              <div class="launch">
+              <div class="launch" id="manual-event" tabindex="-1">
                 <select
                   class="word type"
                   value={typeChoice.value}

@@ -13,7 +13,7 @@ const HOST = "127.0.0.1";
 const HEADERS = {
   "cache-control": "no-store",
   "content-security-policy":
-    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
+    "default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'",
   "referrer-policy": "no-referrer",
   "x-content-type-options": "nosniff",
 };
@@ -22,8 +22,12 @@ const CARD = /^\/v1\/cards\/[1-9]\d*\/(answer|resolve)$/;
 const RULE = /^\/v1\/rules\/[^/]+\/(pause|resume|run|replay)$/;
 const exec = promisify(execFile);
 
-function send(res: ServerResponse, status: number, body: string, type = "application/json") {
-  res.writeHead(status, { ...HEADERS, "content-type": type + "; charset=utf-8" });
+function send(res: ServerResponse, status: number, body: string | Buffer, type = "application/json") {
+  res.writeHead(status, {
+    ...HEADERS,
+    "content-type": type.startsWith("image/") ? type : type + "; charset=utf-8",
+    ...(type.startsWith("image/") && { "cache-control": "public, max-age=31536000, immutable" }),
+  });
   res.end(body);
 }
 
@@ -138,12 +142,11 @@ export function serveWorkbench({ home, port, token, bootcamp = false }: Options)
       if (req.method === "GET" && path === "/local-session.js") {
         return send(res, 200, "window.autoloopLocal = " + JSON.stringify({ bootcamp }) + ";", "text/javascript");
       }
-      const asset = /^\/assets\/([\w-]+\.(js|css))$/.exec(path);
+      const asset = /^\/assets\/([\w-]+\.(js|css|png))$/.exec(path);
       if (req.method === "GET" && asset) {
-        const content = await readFile(join(DIST, "assets", asset[1]), "utf8").catch(() => null);
-        return content === null
-          ? error(res, 404, "资源不存在。")
-          : send(res, 200, content, asset[2] === "js" ? "text/javascript" : "text/css");
+        const content = await readFile(join(DIST, "assets", asset[1])).catch(() => null);
+        const type = { js: "text/javascript", css: "text/css", png: "image/png" }[asset[2]];
+        return content === null ? error(res, 404, "资源不存在。") : send(res, 200, content, type);
       }
 
       if (req.method === "GET" && path === "/local/session" && authorized(req, token)) {

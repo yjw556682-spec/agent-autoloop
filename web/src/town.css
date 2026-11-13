@@ -1,0 +1,515 @@
+:root:has(.town-console) {
+  background-color: #101720;
+}
+body:has(.town-console) {
+  background: radial-gradient(ellipse at 36% -10%, #283744, transparent 56%), #101720;
+}
+.town-console {
+  --town-bg: #141d27;
+  --town-layer: #1a2532;
+  --town-border: #344453;
+  --town-soft: #b1bfcb;
+  --town-mint: #8ddbb9;
+  --town-gold: #ffc778;
+  --town-ink: #f5eee0;
+  --edge: var(--town-border);
+  --surface: var(--town-bg);
+  --quiet: var(--town-soft);
+  --ink: var(--town-ink);
+  width: min(100%, 1680px);
+}
+.town-console .stage {
+  padding-top: 25px;
+}
+.town-console .console-title {
+  margin-bottom: 18px;
+}
+.town-console .console-title h1 {
+  color: #ffefce;
+  font-size: clamp(32px, 4vw, 56px);
+  font-weight: 670;
+}
+.town-console .console-title p {
+  margin: 6px 0 0;
+  color: var(--town-soft);
+}
+.town-console .console-title b {
+  color: var(--town-ink);
+}
+.town-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) clamp(280px, 27%, 370px);
+  gap: 14px;
+  align-items: stretch;
+}
+.town-map {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid #526574;
+  background: #213748 url("./assets/town.png") center / 100% 100% no-repeat;
+  box-shadow: 0 15px 38px #050b12a0;
+}
+.town-map-title {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 9px;
+  border: 1px solid #a4c1d372;
+  border-radius: 4px;
+  background: #152330ef;
+  color: #e1ecf4;
+  font-size: 11px;
+  font-weight: 650;
+}
+.town-live {
+  width: 7px;
+  height: 7px;
+  background: #dfae8c;
+}
+.town-live.up {
+  background: var(--town-mint);
+  box-shadow: 0 0 8px #8ddbb99c;
+}
+.town-pin {
+  --pin-accent: #e9c28c;
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 39px;
+  padding: 4px 7px 4px 5px;
+  white-space: nowrap;
+  border: 1px solid #a3b3bf;
+  border-radius: 6px;
+  background: #11202dee;
+  box-shadow:
+    0 3px 0 #070d18b0,
+    0 6px 14px #0009;
+  color: #fff3da;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 660;
+  transition:
+    box-shadow 160ms,
+    background 160ms;
+}
+.town-pin:hover,
+.town-pin[aria-pressed="true"],
+.town-pin:focus-visible {
+  border-color: var(--pin-accent);
+  background: #243240;
+  box-shadow:
+    0 0 0 2px #17212a,
+    0 0 0 4px var(--pin-accent),
+    0 6px 16px #000a;
+}
+.town-pin:focus-visible {
+  outline: 1px solid white;
+  outline-offset: 6px;
+}
+.town-pin .pin-icon,
+.place-icon {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border-radius: 3px;
+  background: #39424b;
+  color: var(--pin-accent);
+  font:
+    800 15px/1 system-ui,
+    sans-serif;
+}
+.town-pin .pin-count {
+  min-width: 19px;
+  color: var(--pin-accent);
+  font:
+    700 12px/1.2 "Cascadia Mono",
+    Consolas,
+    monospace;
+  text-align: right;
+}
+.pin-dispatch {
+  left: 19.4%;
+  top: 57.5%;
+}
+.pin-hall {
+  left: 49.4%;
+  top: 37%;
+  --pin-accent: #ffd69b;
+}
+.pin-studio {
+  left: 72.5%;
+  top: 53.6%;
+  --pin-accent: #a8e9cf;
+}
+.pin-archive {
+  left: 49.2%;
+  top: 75.7%;
+  --pin-accent: #c5d9a4;
+}
+.pin-lighthouse {
+  left: 87.3%;
+  top: 76.7%;
+  --pin-accent: #c1daff;
+}
+.pin-hall.urgent .pin-icon {
+  background: #fbc673;
+  color: #2c1d0d;
+}
+.pin-hall.urgent:not([aria-pressed="true"]) {
+  border-color: #fbc673;
+  animation: town-beacon 3s ease-in-out infinite;
+}
+@keyframes town-beacon {
+  50% {
+    box-shadow:
+      0 0 0 4px #fbc67377,
+      0 5px 14px #0009;
+  }
+}
+.town-courier,
+.agent-sprite {
+  width: 12px;
+  height: 16px;
+  flex: 0 0 12px;
+  display: inline-block;
+  image-rendering: pixelated;
+  background:
+    linear-gradient(#374351, #374351) 2px 0 / 8px 3px no-repeat,
+    linear-gradient(#d4af87, #d4af87) 3px 3px / 6px 4px no-repeat,
+    linear-gradient(#8099a7, #8099a7) 1px 7px / 10px 5px no-repeat,
+    linear-gradient(#374351, #374351) 2px 12px / 3px 4px no-repeat,
+    linear-gradient(#374351, #374351) 7px 12px / 3px 4px no-repeat;
+}
+.agent-sprite.awake,
+.town-courier {
+  filter: drop-shadow(0 1px 0 #223040) saturate(1.5) brightness(1.3);
+}
+.town-courier {
+  position: absolute;
+  z-index: 1;
+  left: 28.8%;
+  top: 56%;
+  scale: 1.7;
+  transform-origin: center bottom;
+}
+.town-residents {
+  position: absolute;
+  z-index: 1;
+  left: 62%;
+  top: 49%;
+  display: flex;
+  gap: 4px;
+}
+.town-residents .agent-sprite:nth-child(even) {
+  transform: translateY(6px);
+  filter: sepia(0.5) saturate(1.9);
+}
+.town-residents .agent-sprite:not(.awake) {
+  opacity: 0.5;
+}
+.town-courier.walking {
+  animation: town-walk 13s linear infinite alternate;
+}
+@keyframes town-walk {
+  0% {
+    left: 28.8%;
+    top: 56%;
+  }
+  20% {
+    left: 35%;
+    top: 54%;
+  }
+  38% {
+    left: 38%;
+    top: 45%;
+  }
+  57% {
+    left: 45%;
+    top: 40%;
+  }
+  79% {
+    left: 55%;
+    top: 38%;
+  }
+  100% {
+    left: 63%;
+    top: 37%;
+  }
+}
+.town-inspector {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  border: 1px solid var(--town-border);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #202d3a, #151f2a 65%);
+  box-shadow: 0 10px 26px #050b1266;
+}
+.town-inspector-head {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 16px;
+  border-bottom: 1px solid var(--town-border);
+}
+.place-icon {
+  --pin-accent: #e9c28c;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  font-size: 22px;
+  background: #2d3a46;
+  border: 1px solid #4a5765;
+}
+.place-hall {
+  --pin-accent: #ffd69b;
+}
+.place-studio {
+  --pin-accent: #a8e9cf;
+}
+.place-archive {
+  --pin-accent: #c5d9a4;
+}
+.place-lighthouse {
+  --pin-accent: #c1daff;
+}
+.town-inspector h2 {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+}
+.town-inspector-head p {
+  color: var(--town-soft);
+  font-size: 12px;
+  margin: 3px 0 0;
+}
+.town-inspector-body {
+  overflow: auto;
+  min-height: 0;
+  padding: 8px 14px 12px;
+}
+.town-section-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin: 13px 0 7px;
+}
+.town-section-title h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.town-section-title > span {
+  font-size: 11px;
+  color: var(--town-soft);
+}
+.town-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 5px 0;
+  padding: 8px;
+  border: 1px solid #374553;
+  border-radius: 6px;
+  background: #1e2a37;
+  color: var(--town-ink);
+  text-align: left;
+  font: inherit;
+}
+.town-row-button {
+  cursor: pointer;
+}
+.town-row-button:hover {
+  border-color: #92acb8;
+  background: #273747;
+}
+.town-row-copy {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+  overflow-wrap: anywhere;
+}
+.town-row-copy strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+.town-row-copy small {
+  font-size: 11px;
+  color: var(--town-soft);
+}
+.town-tag {
+  flex: none;
+  max-width: 50%;
+  padding: 2px 4px;
+  color: var(--town-soft);
+  background: #131e29;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.town-tag.town-pending,
+.town-tag.town-queued {
+  color: var(--town-gold);
+}
+.town-tag.town-ok,
+.town-tag.town-done {
+  color: var(--town-mint);
+}
+.town-tag.town-claimed {
+  color: #9fcdff;
+}
+.town-tag.town-unknown,
+.town-warning {
+  color: #ffc2a9;
+}
+.town-empty {
+  color: var(--town-soft);
+  margin: 4px 0 14px;
+  font-size: 12px;
+}
+.town-warning {
+  font-size: 12px;
+}
+.town-adapters > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 0;
+  border-bottom: 1px solid #354253;
+  font-size: 12px;
+}
+.town-adapters small {
+  color: var(--town-soft);
+}
+.town-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 14px;
+  border-top: 1px solid var(--town-border);
+}
+.town-actions > *,
+.spectrum-toggle {
+  font: inherit;
+  font-size: 12px;
+  color: var(--town-ink);
+  background: #263644;
+  border: 1px solid #4a6073;
+  border-radius: 5px;
+  text-decoration: none;
+  padding: 6px 9px;
+  cursor: pointer;
+}
+.town-actions > :hover,
+.spectrum-toggle:hover {
+  border-color: #c2dbed;
+}
+.town-actions .town-primary {
+  color: #1f2428;
+  background: #ffd89b;
+  border-color: #ffd89b;
+  font-weight: 700;
+}
+.town-actions .town-primary:hover {
+  background: #ffe7c2;
+}
+.town-inspector :focus-visible,
+.town-console .spectrum-toggle:focus-visible {
+  outline: 2px solid var(--town-gold);
+  outline-offset: 2px;
+}
+.town-detail {
+  background: var(--town-bg);
+  margin-top: 15px;
+  padding: 8px 10px;
+}
+.town-detail .spectrum-head {
+  justify-content: flex-start;
+  color: var(--town-soft);
+  gap: 14px;
+  padding: 8px 4px 0;
+  font-size: 12px;
+}
+.town-detail .plate-zone {
+  scroll-margin-top: 12px;
+}
+.town-console :is(#run-history, #task-submit, #rule-routing, #connection-state, #manual-event) {
+  scroll-margin-top: 12px;
+}
+@media (min-width: 851px) {
+  .town-inspector {
+    contain: size;
+  }
+}
+@media (max-width: 850px) {
+  .town-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .town-inspector-body {
+    max-height: 375px;
+  }
+}
+@media (max-width: 530px) {
+  .town-console .console-title {
+    display: block;
+  }
+  .town-console .console-title p {
+    font-size: 12px;
+  }
+  .town-console .console-title > span {
+    display: inline-block;
+    margin-top: 5px;
+  }
+  .town-pin {
+    min-height: 30px;
+    gap: 3px;
+    padding: 2px 4px;
+    font-size: 10px;
+  }
+  .town-pin .pin-icon {
+    display: none;
+  }
+  .town-pin .pin-count {
+    min-width: 10px;
+    font-size: 10px;
+  }
+  .town-map-title {
+    left: 7px;
+    top: 7px;
+    font-size: 10px;
+  }
+  .pin-studio {
+    top: 51%;
+  }
+  .pin-lighthouse {
+    left: 86%;
+  }
+  .town-inspector-head {
+    padding: 12px 14px;
+  }
+  .town-inspector h2 {
+    font-size: 19px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .town-pin,
+  .pin-hall.urgent,
+  .town-courier.walking {
+    animation: none;
+    transition: none;
+  }
+}

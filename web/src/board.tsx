@@ -26,7 +26,7 @@ export const Board = defineComponent({
                 {connected.value ? "中台在线" : "中台断开"}
               </span>
               <a class="board-link" href="#/">
-                返回总览
+                返回小镇
               </a>
             </div>
           </header>

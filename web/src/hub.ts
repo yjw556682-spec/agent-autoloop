@@ -82,7 +82,7 @@ export type State = {
   cards: CardView[];
   recentCards: CardView[];
   lines: LineView[];
-  agents: { id: string; name: string; worker: string; seenAt: string | null; online: boolean }[];
+  agents: { id: string; name: string; worker: string; use?: string; seenAt: string | null; online: boolean }[];
   channels: { id: string; name: string; seenAt: string | null; online: boolean }[];
   runs: RunView[];
   hasMore: boolean;

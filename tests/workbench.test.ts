@@ -61,6 +61,26 @@ function request(path: string, method = "GET", source = base, body?: unknown) {
   });
 }
 
+test("serves the bundled town artwork with its image type and policy", async () => {
+  const page = await fetch(base + "/");
+  assert.match(page.headers.get("content-security-policy") ?? "", /img-src 'self'/);
+  const html = await page.text();
+  const css = /href="(\/assets\/[^"]+\.css)"/.exec(html)?.[1];
+  assert.ok(css);
+  const styles = await (await fetch(base + css)).text();
+  const image = /(\/assets\/town-[\w-]+\.png)/.exec(styles)?.[1];
+  assert.ok(image);
+  const art = await fetch(base + image);
+  assert.equal(art.status, 200);
+  assert.equal(art.headers.get("content-type"), "image/png");
+  assert.equal(
+    Buffer.from(await art.arrayBuffer())
+      .subarray(1, 4)
+      .toString(),
+    "PNG",
+  );
+});
+
 test("keeps browser credentials local and limits the owner routes", async () => {
   assert.equal((await fetch(base + "/")).status, 200);
   assert.equal((await fetch(base + "/v1/state")).status, 401);

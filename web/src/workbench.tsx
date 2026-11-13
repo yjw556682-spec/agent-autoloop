@@ -108,7 +108,7 @@ export const Workbench = defineComponent({
       const all = props.snapshot;
       return (
         <div class="workbench-columns">
-          <section class="bench-section">
+          <section class="bench-section" id="run-history" tabindex="-1">
             <div class="bench-head">
               <h2>运行记录</h2>
               <div class="bench-tabs" role="group" aria-label="筛选运行">
@@ -196,7 +196,9 @@ export const Workbench = defineComponent({
             </section>
             <section class="bench-section">
               <div class="bench-head">
-                <h2>连接</h2>
+                <h2 id="connection-state" tabindex="-1">
+                  连接
+                </h2>
                 <span>
                   {all.agents.filter((one) => one.online).length + all.channels.filter((one) => one.online).length}/
                   {all.agents.length + all.channels.length} 在线
@@ -309,7 +311,7 @@ export const Operations = defineComponent({
     return () => (
       <div class="operations">
         {bootcampRule.value && (
-          <section class="bench-section bootcamp">
+          <section class="bench-section bootcamp" id="task-submit" tabindex="-1">
             <div class="bench-head">
               <h2>提交高校实训营</h2>
               <span>{bootcampRule.value.paused ? "规则已暂停" : "本地草稿待审核"}</span>
@@ -345,7 +347,7 @@ export const Operations = defineComponent({
             </div>
           </section>
         )}
-        <section class="bench-section rules-list">
+        <section class="bench-section rules-list" id="rule-routing" tabindex="-1">
           <div class="bench-head">
             <h2>规则与来源</h2>
             <span>{props.snapshot.lines.length} 条规则</span>
