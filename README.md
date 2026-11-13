@@ -59,6 +59,12 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 交互终端里直接输入数字回车；非交互终端运行 `agent-autoloop answer 1 2` 选择“绿色”。再跑 `agent-autoloop status`，就能看到它接上刚才的会话并显示“你选了绿色，试跑通过”，还有今天和最近 7 天的轮数、Token 和费用（[统计口径](skills/agent-autoloop/SKILL.md#看情况回答)）。
 
+## 网页工作台
+
+如果电脑已经在运行 Autoloop，可以单独打开新版网页，沿用现有规则、记录和通道。在仓库目录运行 `node scripts/workbench.ts`，用终端显示的完整会话链接打开。Windows 可用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/open-workbench.ps1` 直接打开。
+
+工作台包含谱线总览和大屏、运行记录与经过、待回复卡片、规则操作，以及执行器和通知通道的连接状态。接入已有中台、规则权限、实训营链接入口和其他场景的启用方式见[工作台使用说明](docs/workbench.md)。
+
 ## 一件事怎么转起来
 
 编号和上面的架构图一一对应：

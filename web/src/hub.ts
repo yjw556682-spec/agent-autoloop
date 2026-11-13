@@ -2,6 +2,19 @@
 import { ref } from "vue";
 
 const KEY_STORE = "agent-autoloop.owner-key";
+declare global {
+  interface Window {
+    autoloopLocal?: { bootcamp: boolean };
+  }
+}
+export const local = window.autoloopLocal;
+const initialSession =
+  local && location.hash.startsWith("#/?session=") ? new URLSearchParams(location.hash.slice(3)).get("session") : null;
+if (initialSession) {
+  sessionStorage.setItem(KEY_STORE, initialSession);
+  history.replaceState(null, "", location.pathname + "#/");
+}
+const keyStore = local ? sessionStorage : localStorage;
 
 export type Spending = { rounds: number; tokens: number; cost: number; missingTokens: number; missingCost: number };
 export type CardView = {
@@ -48,6 +61,7 @@ export type LineView = {
   types: string[];
   every: string | null;
   next: string | null;
+  paused?: { reason: string; since: string; until: string | null; skipped?: { count: number } | null } | null;
 };
 export type State = {
   now: string;
@@ -73,6 +87,9 @@ export type State = {
   runs: RunView[];
   hasMore: boolean;
   nextBefore: number | null;
+  sources?: { id: string; name: string; events: number }[];
+  timers?: { rule: string; key: string; at: string }[];
+  elsewhere?: { name: string; next: string; where: string }[];
   unrouted: { id: number; source: string; type: string; subject: string; summary: string }[];
 };
 
@@ -87,13 +104,13 @@ export class HubError extends Error {
   }
 }
 
-export const key = ref(localStorage.getItem(KEY_STORE) ?? "");
+export const key = ref(keyStore.getItem(KEY_STORE) ?? "");
 export const connected = ref(true);
 
 export function setKey(value: string) {
   key.value = value;
-  if (value) localStorage.setItem(KEY_STORE, value);
-  else localStorage.removeItem(KEY_STORE);
+  if (value) keyStore.setItem(KEY_STORE, value);
+  else keyStore.removeItem(KEY_STORE);
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -113,7 +130,8 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return answer.json() as Promise<T>;
 }
 
-export const fetchState = () => call<State>("/v1/state");
+export const fetchState = (before?: number) =>
+  call<State>(before === undefined ? "/v1/state" : `/v1/state?before=${before}`);
 export const fetchWhy = (run: number) => call<Fact[]>(`/v1/runs/${run}/why`);
 export const emitEvent = (event: { id: string; type: string; subject?: string; summary?: string }) =>
   call<{ event: number; duplicate: boolean; routed: string[] }>("/v1/emit", {
@@ -128,6 +146,24 @@ export const answerCard = (id: number, body: { choice?: number; text?: string })
     body: JSON.stringify(body),
   });
 export const cancelRun = (id: number) => call<{ ok: boolean }>(`/v1/runs/${id}/cancel`, { method: "POST" });
+
+function post<T>(path: string, body: object) {
+  return call<T>(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export const resolveCard = (id: number, reason: string) =>
+  post<{ changed: boolean }>(`/v1/cards/${id}/resolve`, { reason });
+export const controlRule = (name: string, action: "run" | "pause" | "resume" | "replay", body: object) =>
+  post<{ changed?: boolean; run?: number; runs?: number[]; paused?: LineView["paused"] }>(
+    `/v1/rules/${encodeURIComponent(name)}/${action}`,
+    body,
+  );
+export const submitBootcamp = (link: string, plan: string) =>
+  post<{ message: string }>("/local/bootcamp", { link, plan });
 
 /**
  * The log as a stream, told over fetch so the owner key travels in a header (EventSource cannot send one). Reconnects
