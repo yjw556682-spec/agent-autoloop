@@ -221,13 +221,19 @@ export const Workbench = defineComponent({
   },
 });
 
-const isBootcampRule = (line: LineView) => local?.bootcamp && line.types.includes("bootcamp.draft.requested");
+const isBootcampRule = (line: LineView) =>
+  local?.bootcamp &&
+  line.types.some((type) => ["bootcamp.draft.requested", "bootcamp.pipeline.requested"].includes(type));
 
 export const Operations = defineComponent({
   props: { snapshot: { type: Object as PropType<State>, required: true } },
   setup(props) {
     const sending = ref(false);
-    const bootcampRule = computed(() => props.snapshot.lines.find(isBootcampRule));
+    const bootcampRule = computed(
+      () =>
+        (local?.bootcamp && props.snapshot.lines.find((line) => line.types.includes("bootcamp.pipeline.requested"))) ||
+        props.snapshot.lines.find(isBootcampRule),
+    );
     const link = ref("");
     const plan = ref("");
     const message = ref("");
@@ -308,6 +314,11 @@ export const Operations = defineComponent({
               <h2>提交高校实训营</h2>
               <span>{bootcampRule.value.paused ? "规则已暂停" : "本地草稿待审核"}</span>
             </div>
+            {bootcampRule.value.types.includes("bootcamp.pipeline.requested") && (
+              <p class="bench-empty">
+                资料统筹 → PPT、助教文档、海报 → 汇总检查。提交后每 15 分钟跟进这份资料的内容变化，三份草稿均等你审核。
+              </p>
+            )}
             <div class="operation-fields">
               <label>
                 飞书任务或方案链接

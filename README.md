@@ -133,7 +133,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ## 拿来即用的场景模板
 
-每套模板都带规则、任务 Skill 和启用说明。
+每套模板都带规则或规则生成器，以及启用说明；需要独立任务 Skill 的模板一并提供。
 
 | 想做什么 | 已经封装好的流程 |
 |---|---|
@@ -143,6 +143,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [用户反馈处理](examples/recipes/feedback/README.md) | 重读反馈当前状态、修复、交付核实、准备回复；需要决定时飞书问你，回答后继续 |
 | [网站巡检](examples/recipes/website-watch/README.md) | 每 5 分钟检查状态和关键内容，首次异常交给 Agent，持续异常不重复通知，恢复后更新原卡片 |
 | [飞书周报与业务摘要](examples/recipes/feishu-brief/README.md) | 周日 18 点按你的权限读汇报和指定表格，生成本地摘要；飞书只发简短摘要，完整稿留在本机 |
+| [实训营草稿团队](examples/recipes/bootcamp-team/README.md) | 只跟进主动提交的任务与方案，定时检查变更；统筹后分做 PPT、助教文档、海报，汇总后交本人审核 |
 | [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线) | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本 |
 
 **启用：** 打开对应说明，把任务 Skill 放进所用 Agent 的 skills 目录，把示例规则合入 `~/.agent-autoloop/rules.json`，替换电脑名和路径，再运行 `agent-autoloop check`。

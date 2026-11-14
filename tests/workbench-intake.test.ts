@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createBootcampIntake } from "../scripts/workbench/intake.ts";
 
+test("structured paused and unchanged receipts remain truthful in the browser", async () => {
+  for (const status of ["paused", "unchanged", "queued", "baseline"]) {
+    const message = `状态：${status}`;
+    const intake = createBootcampIntake(async () => JSON.stringify({ autoloopIntake: 1, status, message }));
+    assert.deepEqual(await intake({ link: "https://a.feishu.cn/docx/a" }), { message });
+  }
+  const bad = createBootcampIntake(async () =>
+    JSON.stringify({ autoloopIntake: 1, status: "unknown", message: "成功" }),
+  );
+  await assert.rejects(bad({ link: "https://a.feishu.cn/docx/a" }));
+});
+
 test("concurrent identical intake requests read Feishu and emit once", async () => {
   let calls = 0;
   let done!: (value: string) => void;

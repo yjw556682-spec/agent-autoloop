@@ -131,7 +131,7 @@ Besides `ask`, receipts can send notifications (`notice`), resolve open cards (`
 
 ## Ready-to-use recipes
 
-Each recipe includes rules, a task Skill, and setup instructions (written in Chinese).
+Each recipe includes rules or a rule generator and setup instructions (written in Chinese); recipes using a separate task Skill include it as well.
 
 | Task | Included workflow |
 |---|---|
@@ -141,6 +141,7 @@ Each recipe includes rules, a task Skill, and setup instructions (written in Chi
 | [User feedback](examples/recipes/feedback/README.md) | Re-read current feedback, fix, deliver and verify, then prepare a reply; ask you in Feishu and resume after your answer |
 | [Website watch](examples/recipes/website-watch/README.md) | Check status and expected content every five minutes; wake the agent on a new incident, keep ongoing failures quiet, and update the card on recovery |
 | [Feishu weekly and business brief](examples/recipes/feishu-brief/README.md) | Read selected reports and tables with your permissions at 6 PM Sunday; summarize locally and send only a short summary to Feishu |
+| [Bootcamp draft team](examples/recipes/bootcamp-team/README.md) | Watch only explicitly submitted Feishu sources; coordinate shared facts, produce three local drafts, and stop for the owner's review |
 | [PR delivery](skills/agent-autoloop/SKILL.md#交付流水线) | Add `deliver` to a PR to review it, wait for CI, merge, wait for deployment, and verify the live version |
 
 **To enable one:** open its instructions, put the task Skill in your agent's skills directory, merge the sample rules into `~/.agent-autoloop/rules.json`, replace worker names and paths, then run `agent-autoloop check`.

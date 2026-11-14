@@ -54,6 +54,18 @@ export function createBootcampIntake(execute: (input: Input) => Promise<string>)
         );
       }
       const message = stdout.trim();
+      try {
+        const receipt = JSON.parse(message.split(/\r?\n/).at(-1)!);
+        if (
+          receipt.autoloopIntake === 1 &&
+          ["queued", "paused", "unchanged", "baseline"].includes(receipt.status) &&
+          typeof receipt.message === "string" &&
+          receipt.message.length <= 2000
+        )
+          return { message: receipt.message };
+      } catch {
+        /* Earlier private intake scripts report a Chinese acknowledgement instead. */
+      }
       if (!/^交给了[：:]/m.test(message))
         throw new IntakeError(409, "当前没有规则确认接收实训营任务，请检查规则与暂停状态。");
       return { message };
