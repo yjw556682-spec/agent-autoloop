@@ -44,9 +44,12 @@ type Options = {
   port: number;
   token: string;
   bootcamp?: boolean;
+  personal?: { port: number; key: string };
 };
 
-export function serveWorkbench({ home, port, token, bootcamp = false }: Options) {
+export function serveWorkbench({ home, port, token, bootcamp = false, personal }: Options) {
+  if (personal && (!Number.isInteger(personal.port) || personal.port < 1 || personal.port > 65535 || !personal.key))
+    throw new Error("个人任务服务配置无效");
   const intake = bootcamp ? bootcampIntake(home) : undefined;
   async function call(path: string, signal: AbortSignal, body?: string) {
     const config = JSON.parse(await readFile(join(home, "config.json"), "utf8"));
@@ -123,7 +126,12 @@ export function serveWorkbench({ home, port, token, bootcamp = false }: Options)
         );
       }
       if (req.method === "GET" && path === "/local-session.js") {
-        return send(res, 200, "window.autoloopLocal = " + JSON.stringify({ bootcamp }) + ";", "text/javascript");
+        return send(
+          res,
+          200,
+          "window.autoloopLocal = " + JSON.stringify({ bootcamp, personal: !!personal }) + ";",
+          "text/javascript",
+        );
       }
       const asset = /^\/assets\/([\w-]+\.(js|css|png))$/.exec(path);
       if (req.method === "GET" && asset) {
@@ -133,7 +141,28 @@ export function serveWorkbench({ home, port, token, bootcamp = false }: Options)
       }
 
       if (req.method === "GET" && path === "/local/session" && authorized(req, token)) {
-        return send(res, 200, JSON.stringify({ ok: true, bootcamp }));
+        return send(res, 200, JSON.stringify({ ok: true, bootcamp, personal: !!personal }));
+      }
+
+      const personalRoute = /^\/local\/personal\/tasks(?:\/personal-[a-f0-9]{24}(?:\/files\/[a-f0-9]{64})?)?$/.test(
+        path,
+      );
+      if (personal && req.method === "GET" && personalRoute) {
+        if (!authorized(req, token)) return error(res, 401, "请先打开工作台会话。");
+        const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
+          headers: { authorization: "Bearer " + personal.key },
+          signal: AbortSignal.any([gone.signal, AbortSignal.timeout(15_000)]),
+          redirect: "error",
+        });
+        if (!response.body) return send(res, response.status, "");
+        const type = response.headers.get("content-type") ?? "application/json";
+        const download = response.headers.get("content-disposition");
+        res.writeHead(response.status, {
+          ...HEADERS,
+          "content-type": type,
+          ...(download && { "content-disposition": download }),
+        });
+        return await pipeline(response.body as AsyncIterable<Uint8Array>, res, { signal: gone.signal });
       }
 
       const read =
@@ -212,7 +241,10 @@ if (import.meta.main) {
       (file) => file.isFile(),
       () => false,
     ));
-  const server = serveWorkbench({ home, port, token, bootcamp });
+  const personalFile = process.env.AUTOLOOP_PERSONAL_CONFIG;
+  const personalSettings = personalFile ? JSON.parse(await readFile(personalFile, "utf8")) : null;
+  const personal = personalSettings ? { port: personalSettings.port ?? 3352, key: personalSettings.owner } : undefined;
+  const server = serveWorkbench({ home, port, token, bootcamp, personal });
   server.on("listening", async () => {
     const address = "http://" + HOST + ":" + (server.address() as AddressInfo).port + "/#/?session=" + token;
     if (process.argv.includes("--session-file")) {

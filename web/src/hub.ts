@@ -6,7 +6,7 @@ export { HubError } from "./transport";
 const KEY_STORE = "agent-autoloop.owner-key";
 declare global {
   interface Window {
-    autoloopLocal?: { bootcamp: boolean };
+    autoloopLocal?: { bootcamp: boolean; personal?: boolean };
   }
 }
 export const local = window.autoloopLocal;
@@ -150,3 +150,45 @@ export const controlRule = (name: string, action: "run" | "pause" | "resume" | "
   );
 export const submitBootcamp = (link: string, plan: string) =>
   post<{ message: string }>("/local/bootcamp", { link, plan }, 95_000);
+
+export type PersonalTask = {
+  id: string;
+  title?: string;
+  node: string;
+  agent: string;
+  use?: string;
+  mode: string;
+  state: string;
+  run: number | null;
+};
+export type PersonalDetails = PersonalTask & {
+  files: { id: string; name: string; bytes: number; run: number; attempt: number }[];
+  cleanup: { run: number; attempt: number; cleaned: number }[];
+};
+export const fetchPersonalTasks = (signal: AbortSignal) =>
+  call<{
+    tasks: PersonalTask[];
+    devices: { name: string; online: boolean; agents: { id: string; use: string; mode: string }[] }[];
+  }>("/local/personal/tasks", { signal });
+export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
+  call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });
+export async function downloadPersonalFile(task: string, id: string, name: string) {
+  const session = key.value;
+  const response = await fetch(
+    "/local/personal/tasks/" + encodeURIComponent(task) + "/files/" + encodeURIComponent(id),
+    {
+      headers: { authorization: "Bearer " + session },
+      signal: AbortSignal.timeout(20_000),
+      redirect: "error",
+    },
+  );
+  if (!response.ok) throw new Error("成果暂时无法下载。");
+  const content = await response.blob();
+  if (session !== key.value) return;
+  const url = URL.createObjectURL(content);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}

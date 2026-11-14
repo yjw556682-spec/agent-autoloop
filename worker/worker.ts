@@ -71,6 +71,12 @@ type Entry = {
   result?: Result;
 };
 export type WorkerHub = Pick<Hub, "work" | "started" | "result">;
+type IsolatedRun = {
+  prepare(job: Job, dir: string): Promise<{ cwd: string; env: NodeJS.ProcessEnv; argv: string[] }>;
+  capture?(job: Job, dir: string, text: string): Promise<void>;
+  complete(job: Job, dir: string, result: Result): Promise<{ rejected?: { reason: string }[] }>;
+  cleaned?(job: Pick<Job, "run" | "attempt" | "token">): Promise<void>;
+};
 export type WorkerOptions = {
   hub: WorkerHub;
   name: string;
@@ -80,6 +86,7 @@ export type WorkerOptions = {
   unreachable?: string[];
   wait?: number;
   now?: () => number;
+  isolated?: IsolatedRun;
 };
 
 function save(entry: Entry) {
@@ -189,6 +196,7 @@ export function createWorker({
   unreachable,
   wait = WAIT,
   now = Date.now,
+  isolated,
 }: WorkerOptions) {
   let claim = randomUUID();
   let unreachableSince: number | null = null;
@@ -214,7 +222,8 @@ export function createWorker({
     });
 
   /** Starts a turn of the agent: a process that outlives this one, leaving its output and exit code in files. */
-  function launch(entry: Entry, adapter: Adapter, prompt: string) {
+  async function launch(entry: Entry, adapter: Adapter, prompt: string) {
+    const prepared = isolated && (await isolated.prepare(entry.job, entry.dir));
     entry.turn += 1;
     entry.launchedAt = now();
     entry.usageBaseline = entry.resume ? loadUsage(entry.job.agent.use, entry.resume) : undefined;
@@ -224,7 +233,7 @@ export function createWorker({
     delete entry.why;
     save(entry);
     const { rule, agent } = entry.job;
-    const cwd = rule.cwd.replace(/^~(?=[/\\])/, homedir());
+    const cwd = prepared ? prepared.cwd : rule.cwd.replace(/^~(?=[/\\])/, homedir());
     const turn: Turn = {
       prompt,
       session: entry.session,
@@ -238,7 +247,14 @@ export function createWorker({
       folder: entry.dir,
     };
     if (!existsSync(cwd)) throw new Error(`在 ${cwd} 启动不了：这个目录不存在`);
-    const argv = adapter.command(turn);
+    const argv = prepared
+      ? [
+          ...prepared.argv,
+          promptFor(entry.job, path.join(prepared.cwd, "context.json")) +
+            "\n\n任务说明在 request.txt，资料在 input/，上一轮已交付的文件在 previous/，成果与交接说明写到 output/。如有检查点，先核对已经完成的部分。只执行工作区内的分析、修改与验证。需要对外发送、发布、删除、付款或修改生产环境时，结束本轮并提交具体动作供本人确认。",
+        ]
+      : adapter.command(turn);
+    const env = prepared ? prepared.env : agentEnvironment(entry);
     const { out, err, exit, command } = files(entry);
     if (process.platform === "win32") {
       writeFileSync(command, JSON.stringify({ argv, cwd, exit }), { mode: 0o600 });
@@ -256,7 +272,7 @@ export function createWorker({
           ],
           {
             cwd,
-            env: { ...agentEnvironment(entry), AGENT_AUTOLOOP_NODE: process.execPath },
+            env: { ...env, AGENT_AUTOLOOP_NODE: process.execPath },
             detached: true,
             windowsHide: true,
             stdio: ["ignore", output, errors],
@@ -290,10 +306,12 @@ export function createWorker({
       ":",
     ].join("\n");
     // The login shell gives it the PATH and sign-in its owner has in a terminal; launchd and systemd give neither.
-    const login = [process.env.SHELL ?? "/bin/sh", "-lc", 'exec /bin/sh "$AGENT_AUTOLOOP_COMMAND"'];
+    const login = prepared
+      ? ["/bin/sh", command]
+      : [process.env.SHELL ?? "/bin/sh", "-lc", 'exec /bin/sh "$AGENT_AUTOLOOP_COMMAND"'];
     const child = spawn("/bin/sh", ["-c", script, marker(entry), out, err, exit, ...login], {
       cwd,
-      env: { ...agentEnvironment(entry), AGENT_AUTOLOOP_COMMAND: command },
+      env: { ...env, AGENT_AUTOLOOP_COMMAND: command },
       detached: true,
       stdio: "ignore",
     });
@@ -321,7 +339,7 @@ export function createWorker({
       prompt: "",
       turn: 0,
       session: job.session ?? randomUUID(),
-      resume: job.session,
+      resume: isolated ? null : job.session,
       repairs: 0,
       triedFresh: false,
     };
@@ -332,7 +350,7 @@ export function createWorker({
       const adapter = await adapterFor(job.agent.use);
       entry.prompt = promptFor(job, path.join(dir, "context.json"));
       save(entry);
-      launch(entry, adapter, entry.prompt);
+      await launch(entry, adapter, entry.prompt);
     } catch (error) {
       endWith(entry, { outcome: "failed", error: String((error as Error).message ?? error).slice(0, 500) });
     }
@@ -353,6 +371,12 @@ export function createWorker({
   }
 
   function discardReceipt(entry: Entry, adapter: Adapter, problem: string) {
+    if (isolated)
+      return endWith(entry, {
+        outcome: "failed",
+        error: "这一轮的回执格式无效，未执行回执中的动作。",
+        usage: entry.usage,
+      });
     const original = { ...entry, turn: entry.turn - entry.repairs };
     const reading = read(original, adapter, 0);
     const { result } = resultFrom(readMessage(reading.text ?? ""), {
@@ -367,11 +391,13 @@ export function createWorker({
   }
 
   /** A turn has ended. What it said is a result, or a reason to ask it again without redoing anything. */
-  function conclude(entry: Entry, adapter: Adapter, code: number | null) {
+  async function conclude(entry: Entry, adapter: Adapter, code: number | null) {
     // One ended because its turn was over but it wouldn't exit said what it had to say first.
     const seen = read(entry, adapter, entry.finishedAt ? 0 : code);
-    entry.usage = addUsage(addUsage(entry.usage, seen.usage), sessionRise(entry, seen));
-    const session = seen.session ?? (entry.turn > 0 && adapter.link ? entry.session : undefined);
+    entry.usage = addUsage(addUsage(entry.usage, seen.usage), isolated ? seen.sessionUsage : sessionRise(entry, seen));
+    const session = isolated
+      ? undefined
+      : (seen.session ?? (entry.turn > 0 && adapter.link ? entry.session : undefined));
     if (seen.session) entry.session = seen.session;
     const usage = entry.usage && { usage: entry.usage };
     const known = session && { session };
@@ -383,7 +409,7 @@ export function createWorker({
       return endWith(entry, { outcome: "failed", error, ...known, ...usage });
     }
     if (seen.error !== undefined || !seen.text?.trim()) {
-      const error = seen.error || "没留下结果";
+      const error = isolated ? "执行程序未交付有效结果" : seen.error || "没留下结果";
       if (entry.repairs) return discardReceipt(entry, adapter, error);
       // The conversation may not be there to go on in, or something else has it open: this go carries on in a new one.
       // Not once the turn has started: a new one would do its work again. The hub tries again later, in this one.
@@ -393,7 +419,7 @@ export function createWorker({
         entry.resume = null;
         entry.session = randomUUID();
         try {
-          launch(entry, adapter, entry.prompt);
+          await launch(entry, adapter, entry.prompt);
           return;
         } catch (failure) {
           return endWith(entry, { outcome: "failed", error: String(failure).slice(0, 500) });
@@ -403,14 +429,21 @@ export function createWorker({
     }
     const { result, problem } = resultFrom(readMessage(seen.text), { session, usage: entry.usage });
     if (entry.repairs && !problem && result.outcome === "failed") return discardReceipt(entry, adapter, result.error!);
-    if (!problem) return endWith(entry, result);
+    if (!problem) {
+      try {
+        await isolated?.capture?.(entry.job, entry.dir, seen.text);
+      } catch {
+        return endWith(entry, { outcome: "failed", error: "无法保存本轮答复", ...usage });
+      }
+      return endWith(entry, result);
+    }
     // Its work is done and only the receipt is wrong: it writes the receipt again, and does nothing again.
-    if (entry.repairs < REPAIRS && seen.session) {
+    if (!isolated && entry.repairs < REPAIRS && seen.session) {
       log(`run ${entry.run}: receipt not readable (${problem}); asking again`);
       entry.repairs += 1;
       entry.resume = seen.session;
       try {
-        launch(entry, adapter, repairPrompt(problem));
+        await launch(entry, adapter, repairPrompt(problem));
         return;
       } catch (error) {
         return discardReceipt(entry, adapter, String(error));
@@ -477,7 +510,7 @@ export function createWorker({
       entry.session = seen.session;
       save(entry);
     }
-    const session = seen.session ?? (adapter.link ? entry.session : undefined);
+    const session = isolated ? undefined : (seen.session ?? (adapter.link ? entry.session : undefined));
     if (session && session !== entry.told) {
       try {
         await hub.started(entry.run, entry.token, { session, ...(adapter.link && { link: adapter.link(session) }) });
@@ -513,6 +546,16 @@ export function createWorker({
   /** Hands in what has ended. One the hub can't take now waits for next time; one it refuses is dropped and said so. */
   async function settle(entry: Entry) {
     if (!entry.result) return;
+    if (isolated) {
+      const answer = await isolated.complete(entry.job, entry.dir, entry.result);
+      if (answer.rejected?.length) log(`run ${entry.run}: receipt needs attention`);
+      const { run, attempt, token } = entry.job;
+      const marker = path.join(RUNS, `cleanup-${run}-${attempt}.json`);
+      writeFileSync(marker + ".tmp", JSON.stringify({ run, attempt, token }), { mode: 0o600 });
+      renameSync(marker + ".tmp", marker);
+      await clean(marker);
+      return;
+    }
     try {
       const answer = await hub.result(entry.run, entry.token, entry.result);
       for (const item of answer?.rejected ?? []) log(`run ${entry.run}: not applied: ${JSON.stringify(item)}`);
@@ -524,6 +567,23 @@ export function createWorker({
       log(`run ${entry.run}: the hub refused its result (${error.status}: ${error.message}); dropped`);
     }
     unlinkSync(path.join(entry.dir, "entry.json"));
+  }
+
+  // An acknowledged receipt must never be rebuilt from a partially removed workspace.
+  async function clean(file: string) {
+    const job: Pick<Job, "run" | "attempt" | "token"> = JSON.parse(readFileSync(file, "utf8"));
+    if (
+      !Number.isSafeInteger(job.run) ||
+      job.run < 1 ||
+      !Number.isSafeInteger(job.attempt) ||
+      job.attempt < 1 ||
+      file !== path.join(RUNS, `cleanup-${job.run}-${job.attempt}.json`)
+    )
+      throw new Error("清理记录无效");
+    const dir = path.join(RUNS, `${job.run}-${job.attempt}`);
+    rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+    await isolated?.cleaned?.(job);
+    unlinkSync(file);
   }
 
   /** Nothing else can tell the owner when the hub is what's gone. */
@@ -551,16 +611,20 @@ export function createWorker({
   /** Trouble with one run, a folder it can't write to say, is for the next round and holds up no other. */
   async function eachEntry(step: (entry: Entry) => Promise<unknown>) {
     for (const entry of entries()) {
+      if (isolated && existsSync(path.join(RUNS, `cleanup-${entry.run}-${entry.attempt}.json`))) continue;
       try {
         await step(entry);
       } catch (error) {
-        sayOnce(`run ${entry.run}: ${error}`);
+        sayOnce(isolated ? `run ${entry.run}: 正在等待交付或清理确认` : `run ${entry.run}: ${error}`);
       }
     }
   }
 
   /** One round: look at what's in hand, hand in what's ended, come for more. Whether the hub could be reached. */
   async function tick() {
+    if (isolated)
+      for (const name of readdirSync(RUNS).filter((file) => /^cleanup-\d+-\d+\.json$/.test(file)))
+        await clean(path.join(RUNS, name)).catch(() => sayOnce("上次清理或清理回执尚未确认，稍后重试"));
     // Here and not in run: whatever drives the worker comes through here.
     if (now() - tidied >= TIDY_EVERY) {
       tidied = now();
@@ -568,7 +632,9 @@ export function createWorker({
     }
     await eachEntry(check);
     await eachEntry(settle);
-    const held = entries();
+    const held = entries().filter(
+      (entry) => !isolated || !existsSync(path.join(RUNS, `cleanup-${entry.run}-${entry.attempt}.json`)),
+    );
     let reachable = true;
     try {
       const answer = await hub.work({
@@ -596,6 +662,7 @@ export function createWorker({
   /** Output of finished runs is kept a while for looking into, then goes. */
   function tidy(moment = now()) {
     for (const id of readdirSync(RUNS)) {
+      if (isolated && /^cleanup-\d+-\d+\.json$/.test(id)) continue;
       const dir = path.join(RUNS, id);
       try {
         const expired = moment - statSync(dir).mtimeMs > KEEP_DAYS * 24 * 3600_000;

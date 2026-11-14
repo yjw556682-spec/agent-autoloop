@@ -1,0 +1,30 @@
+{
+  "name": "desk",
+  "url": "https://workers.example.com",
+  "key": "replace-with-desk-worker-key",
+  "capacity": 2,
+  "agents": [
+    {
+      "id": "writer",
+      "use": "codex",
+      "mode": "local",
+      "program": "/usr/local/bin/codex",
+      "codexHome": "/home/owner/.codex"
+    },
+    {
+      "id": "analyst",
+      "use": "claude",
+      "mode": "api",
+      "model": "claude-task-model",
+      "program": "/usr/local/bin/claude"
+    },
+    {
+      "id": "reviewer",
+      "use": "zcode",
+      "mode": "api",
+      "model": "zcode-task-model",
+      "program": "/usr/local/bin/zcode",
+      "isolatedHost": true
+    }
+  ]
+}

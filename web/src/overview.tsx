@@ -21,6 +21,7 @@ import { runStatus } from "./run-status";
 import { selected } from "./selection";
 import { createSubmission } from "./submission";
 import { Town } from "./town";
+import { Personal } from "./personal";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));
 
@@ -592,6 +593,7 @@ export const Overview = defineComponent({
               />
             )}
             {all && <Operations snapshot={all} />}
+            {all && local?.personal && <Personal />}
             {hasManualIntake.value && (
               <div class="launch" id="manual-event" tabindex="-1">
                 <select

@@ -1,0 +1,44 @@
+{
+  "directory": "/var/lib/autoloop-personal",
+  "port": 3352,
+  "hub": "http://127.0.0.1:3350",
+  "sourceKey": "replace-with-personal-source-key",
+  "owner": "replace-with-private-owner-key",
+  "devices": [
+    {
+      "name": "desk",
+      "keyHash": "replace-with-sha256-of-desk-worker-key",
+      "agents": [
+        { "id": "writer", "use": "codex", "mode": "local", "keywords": ["草稿", "总结"] },
+        {
+          "id": "analyst",
+          "use": "claude",
+          "mode": "api",
+          "model": "claude-task-model",
+          "keywords": ["数据分析", "对比"]
+        },
+        { "id": "reviewer", "use": "zcode", "mode": "api", "model": "zcode-task-model", "keywords": ["检查", "审核"] }
+      ]
+    },
+    {
+      "name": "laptop",
+      "keyHash": "replace-with-sha256-of-laptop-worker-key",
+      "agents": [{ "id": "writer", "use": "codex", "mode": "local" }]
+    }
+  ],
+  "gateway": {
+    "url": "http://127.0.0.1:4000",
+    "key": "replace-with-private-litellm-admin-key",
+    "publicBase": "https://models.example.com/v1",
+    "model": "task-model",
+    "budget": 0.5
+  },
+  "channel": { "id": "feishu", "owner": "ou_replace_with_your_id" },
+  "feishu": {
+    "group": "oc_replace_with_group",
+    "owner": "ou_replace_with_your_id",
+    "bot": "ou_replace_with_bot_id",
+    "program": "/usr/local/bin/lark-cli",
+    "profile": "/var/lib/autoloop-personal/feishu"
+  }
+}
