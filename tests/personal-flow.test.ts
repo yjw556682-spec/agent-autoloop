@@ -4,10 +4,68 @@ import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { test } from "node:test";
+import { connectHub } from "../examples/recipes/personal-multimachine/config.ts";
 import { createPersonalServer } from "../examples/recipes/personal-multimachine/server.ts";
 import { prepareRun, finishRun, type Device } from "../examples/recipes/personal-multimachine/device.ts";
 import { agentId, hash } from "../examples/recipes/personal-multimachine/data.ts";
+
+// A disconnected idle worker must not leave a cloud long poll that can take the next task from its replacement.
+test("disconnecting a worker aborts the upstream long poll", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "autoloop-disconnect-"));
+  const connected = Promise.withResolvers<void>();
+  const disconnected = Promise.withResolvers<boolean>();
+  const hub = createServer((_req, res) => {
+    res.on("close", () => disconnected.resolve(true));
+    connected.resolve();
+  }).listen(0, "127.0.0.1");
+  await once(hub, "listening");
+  const devices = [
+    { name: "a", keyHash: hash("key-a"), agents: [{ id: "writer", use: "codex" as const, mode: "local" as const }] },
+  ];
+  const server = createPersonalServer({
+    database: join(root, "server.db"),
+    owner: "owner",
+    devices,
+    upstream: connectHub({
+      directory: root,
+      owner: "owner",
+      sourceKey: "source",
+      devices,
+      hub: "http://127.0.0.1:" + (hub.address() as { port: number }).port,
+    }),
+  });
+  t.after(async () => {
+    hub.closeAllConnections();
+    await new Promise<void>((resolve) => hub.close(() => resolve()));
+    server.http.closeAllConnections();
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  });
+  server.http.listen(0, "127.0.0.1");
+  await once(server.http, "listening");
+  const stop = new AbortController();
+  const worker = fetch(
+    "http://127.0.0.1:" + (server.http.address() as { port: number }).port + "/v1/work?claim=old&wait=50",
+    {
+      headers: { authorization: "Bearer key-a" },
+      signal: stop.signal,
+    },
+  ).catch(() => {});
+  await connected.promise;
+  stop.abort();
+  await worker;
+  let timer: ReturnType<typeof setTimeout>;
+  const closed = await Promise.race([
+    disconnected.promise,
+    new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), 2000);
+    }),
+  ]);
+  clearTimeout(timer!);
+  assert.equal(closed, true, "The abandoned cloud poll can still claim a new task");
+});
 
 test("an assigned worker uploads once, retries a lost receipt, then cleans its files", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "autoloop-personal-"));
@@ -90,6 +148,10 @@ test("an assigned worker uploads once, retries a lost receipt, then cleans its f
   const dir = join(root, "worker", "1-1");
   await assert.rejects(prepareRun(device, { ...job(), agent: { ...job().agent, use: "claude" } }, dir), /本机执行方式/);
   const launched = await prepareRun(device, job(), dir);
+  // Model HTTP proxies must not grant offline file tools a proxy exception or trigger Windows firewall reprovisioning.
+  assert.ok(
+    launched.argv.some((arg) => arg.startsWith("shell_environment_policy.exclude=") && arg.includes('"*_PROXY"')),
+  );
   assert.equal(await readFile(join(launched.cwd, "input", "notes.md"), "utf8"), "课程资料");
   const { writeFile } = await import("node:fs/promises");
   await writeFile(join(launched.cwd, "output", "draft.md"), "可交付草稿");

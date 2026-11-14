@@ -21,7 +21,13 @@ import { parseResult } from "../../../protocol/validate.ts";
 
 export type DeviceRecord = { name: string; keyHash: string; agents: Profile[] };
 type Reply = { status: number; body: unknown };
-export type Upstream = (method: string, path: string, key: string, body?: unknown) => Promise<Reply>;
+export type Upstream = (
+  method: string,
+  path: string,
+  key: string,
+  body?: unknown,
+  signal?: AbortSignal,
+) => Promise<Reply>;
 export type Lease = { key: string; base: string; model: string };
 export type Gateway = {
   issue: (name: string, model?: string) => Promise<Lease>;
@@ -261,6 +267,58 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
         return task.state === "dispatching" ? dispatch(task) : json({});
       }).catch(() => {});
     }
+    await reconcileCancelled().catch(() => {});
+  }
+
+  async function reconcileCancelled() {
+    const unresolved = new Map(
+      (db.prepare("SELECT * FROM tasks WHERE state IN ('queued','running','failed')").all() as Task[]).map((task) => [
+        task.id,
+        task,
+      ]),
+    );
+    if (!unresolved.size) return;
+    let before: number | undefined;
+    while (unresolved.size) {
+      const reply = await upstream("GET", "/v1/state" + (before ? "?before=" + before : ""), owner);
+      if (reply.status !== 200) return;
+      const page = reply.body as {
+        runs: {
+          id: number;
+          rule: string;
+          state: string;
+          createdAt: string;
+          events: { source: string; type: string; subject: string }[];
+        }[];
+        hasMore: boolean;
+        nextBefore: number | null;
+      };
+      if (!Array.isArray(page.runs)) return;
+      for (const run of [...page.runs].sort((a, b) => b.id - a.id)) {
+        for (const event of run.events) {
+          const task = unresolved.get(event.subject);
+          if (
+            !task ||
+            event.source !== "personal" ||
+            event.type !== agentId(task.node, task.agent) ||
+            run.rule !== event.type
+          )
+            continue;
+          // Only the latest matching run may resolve a task; a review continuation can follow an older cancelled run.
+          unresolved.delete(task.id);
+          if (run.state !== "cancelled" || (task.run !== null && run.id < task.run)) continue;
+          db.prepare("UPDATE tasks SET state = 'cancelled', run = ? WHERE id = ? AND state = ? AND run IS ?").run(
+            run.id,
+            task.id,
+            task.state,
+            task.run,
+          );
+        }
+      }
+      const next = page.nextBefore;
+      if (!page.hasMore || !Number.isSafeInteger(next) || next! <= 0 || (before && next! >= before)) return;
+      before = next!;
+    }
   }
 
   async function revoke(run: number, attempt: number) {
@@ -272,9 +330,9 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     }
   }
 
-  async function work(url: URL, key: string, device: DeviceRecord) {
+  async function work(url: URL, key: string, device: DeviceRecord, signal: AbortSignal) {
     seen.set(device.name, { at: Date.now(), free: url.searchParams.get("capacity") !== "0" });
-    const reply = await upstream("GET", url.pathname + url.search, key);
+    const reply = await upstream("GET", url.pathname + url.search, key, undefined, signal);
     if (reply.status !== 200) {
       seen.delete(device.name);
       return reply;
@@ -521,7 +579,16 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     }
     const device = key && devices.find((item) => equal(item.keyHash, hash(key)));
     if (!device) throw new Problem(401, "需要登录");
-    if (method === "GET" && path === "/v1/work") return work(url, key, device);
+    if (method === "GET" && path === "/v1/work") {
+      const gone = new AbortController();
+      const abort = () => gone.abort();
+      res.once("close", abort);
+      try {
+        return await work(url, key, device, gone.signal);
+      } finally {
+        res.off("close", abort);
+      }
+    }
     const parts = path.split("/");
     if (
       parts.length === 6 &&

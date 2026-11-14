@@ -53,7 +53,7 @@ export function personalRules(devices: Pick<DeviceRecord, "name" | "agents">[], 
 export function connectHub(config: ServiceConfig): Upstream {
   const origin = baseUrl(config.hub, true);
   if (!config.sourceKey || config.sourceKey === config.owner) throw new Error("来源与本人密钥必须独立");
-  return async (method, path, key, body) => {
+  return async (method, path, key, body, signal) => {
     const response = await fetch(origin + path, {
       method,
       redirect: "error",
@@ -62,7 +62,10 @@ export function connectHub(config: ServiceConfig): Upstream {
         ...(body !== undefined ? { "content-type": "application/json" } : {}),
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-      signal: AbortSignal.timeout(path.startsWith("/v1/work?") ? 85_000 : 15_000),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(path.startsWith("/v1/work?") ? 85_000 : 15_000),
+        ...(signal ? [signal] : []),
+      ]),
     });
     return { status: response.status, body: await response.json() };
   };

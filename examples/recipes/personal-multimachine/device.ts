@@ -121,7 +121,7 @@ async function codexArgs(profile: LocalAgent, env: NodeJS.ProcessEnv, dir: strin
     "-c",
     'web_search="disabled"',
     "-c",
-    'shell_environment_policy.exclude=["AUTOLOOP_MODEL_KEY","OPENAI_API_KEY","ANTHROPIC_API_KEY"]',
+    'shell_environment_policy.exclude=["AUTOLOOP_MODEL_KEY","OPENAI_API_KEY","ANTHROPIC_API_KEY","*_PROXY"]',
   ];
   args.push(
     "-c",

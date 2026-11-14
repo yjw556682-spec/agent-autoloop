@@ -1,4 +1,5 @@
 // The real hub and supervised worker must deliver across separate homes, including a fresh review continuation.
+// A task cancelled before any worker claims it must not stay queued in the personal view, even beyond the first page.
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -105,6 +106,36 @@ async function waitFor<T>(read: () => Promise<T | undefined>, description: strin
   }
   assert.fail(description);
 }
+
+test("owner cancellation before pickup reconciles from paginated hub history without inventing cleanup", async () => {
+  const cancelled = await request("/personal/tasks", { id: "cancel-before-pickup", text: "测试取消", agent: "writer" });
+  const run = db.prepare("SELECT id FROM runs ORDER BY id DESC LIMIT 1").get()!.id;
+  execute("cancel", [Number(run)], Date.now());
+  for (let i = 0; i < 61; i++) {
+    execute(
+      "ingest",
+      ["personal", { id: "history-" + i, subject: "history-" + i, type: "personal-alpha--writer" }],
+      Date.now(),
+    );
+    const newer = db.prepare("SELECT id FROM runs ORDER BY id DESC LIMIT 1").get()!.id;
+    execute("cancel", [Number(newer)], Date.now());
+  }
+  const queued = await request("/personal/tasks", { id: "still-queued", text: "保留排队", agent: "writer" });
+  await service.retryPending();
+  const result = await request("/personal/tasks/" + cancelled.id);
+  assert.equal(result.state, "cancelled");
+  assert.equal(result.run, Number(run));
+  assert.deepEqual(result.cleanup, []);
+  assert.deepEqual(result.files, []);
+  assert.equal(
+    (await request("/personal/tasks")).tasks.find((task: { id: string }) => task.id === cancelled.id).state,
+    "cancelled",
+  );
+  assert.equal((await request("/personal/tasks/" + queued.id)).state, "queued");
+  const pendingRun = db.prepare("SELECT id FROM runs ORDER BY id DESC LIMIT 1").get()!.id;
+  execute("cancel", [Number(pendingRun)], Date.now());
+  await service.retryPending();
+});
 
 test(
   "two worker processes deliver and clean up; private review continues without a local session",
