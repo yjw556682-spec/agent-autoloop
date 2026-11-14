@@ -6,6 +6,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { bootcampIntake, IntakeError } from "./workbench/intake.ts";
+import { personalIntake } from "./workbench/personal.ts";
 
 const DIST = join(import.meta.dirname, "..", "web", "dist");
 const HOST = "127.0.0.1";
@@ -44,13 +45,14 @@ type Options = {
   port: number;
   token: string;
   bootcamp?: boolean;
-  personal?: { port: number; key: string };
+  personal?: { port: number; key: string; larkCommand?: string; submit?: boolean; targets?: string[] };
 };
 
 export function serveWorkbench({ home, port, token, bootcamp = false, personal }: Options) {
   if (personal && (!Number.isInteger(personal.port) || personal.port < 1 || personal.port > 65535 || !personal.key))
     throw new Error("个人任务服务配置无效");
   const intake = bootcamp ? bootcampIntake(home) : undefined;
+  const submitPersonal = personal?.submit && personalIntake(personal.larkCommand, personal.targets);
   async function call(path: string, signal: AbortSignal, body?: string) {
     const config = JSON.parse(await readFile(join(home, "config.json"), "utf8"));
     const endpoint = new URL(config.url);
@@ -129,7 +131,15 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
         return send(
           res,
           200,
-          "window.autoloopLocal = " + JSON.stringify({ bootcamp, personal: !!personal }) + ";",
+          "window.autoloopLocal = " +
+            JSON.stringify({
+              bootcamp,
+              personal: !!personal,
+              personalIntake: !!submitPersonal,
+              personalTargets: personal?.targets,
+              feishuIntake: !!personal?.larkCommand,
+            }) +
+            ";",
           "text/javascript",
         );
       }
@@ -174,6 +184,7 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           CARD.test(path) ||
           RULE.test(path) ||
           path === "/v1/emit" ||
+          (submitPersonal && path === "/local/personal/tasks") ||
           (bootcamp && path === "/local/bootcamp"));
       if (!read && !write) return error(res, 404, "没有这个地址。");
       if (!authorized(req, token)) return error(res, 401, "请用启动工作台时显示的会话链接打开。");
@@ -211,6 +222,28 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           throw failure;
         }
       }
+      if (path === "/local/personal/tasks" && submitPersonal && personal) {
+        let input: unknown;
+        try {
+          input = JSON.parse(body!);
+        } catch {
+          return error(res, 400, "提交内容格式不正确。");
+        }
+        try {
+          const task = await submitPersonal(input);
+          const response = await fetch("http://127.0.0.1:" + personal.port + "/personal/tasks", {
+            method: "POST",
+            headers: { authorization: "Bearer " + personal.key, "content-type": "application/json" },
+            body: JSON.stringify(task),
+            redirect: "error",
+            signal: AbortSignal.any([gone.signal, AbortSignal.timeout(15000)]),
+          });
+          return send(res, response.status, await response.text());
+        } catch (failure) {
+          if (failure instanceof IntakeError) return error(res, failure.status, failure.message);
+          throw failure;
+        }
+      }
       const upstream = await call(path + url.search, AbortSignal.any([gone.signal, AbortSignal.timeout(6000)]), body);
       if (upstream.status === 401) {
         await upstream.body?.cancel();
@@ -243,7 +276,15 @@ if (import.meta.main) {
     ));
   const personalFile = process.env.AUTOLOOP_PERSONAL_CONFIG;
   const personalSettings = personalFile ? JSON.parse(await readFile(personalFile, "utf8")) : null;
-  const personal = personalSettings ? { port: personalSettings.port ?? 3352, key: personalSettings.owner } : undefined;
+  const personal = personalSettings
+    ? {
+        port: personalSettings.port ?? 3352,
+        key: personalSettings.owner,
+        larkCommand: personalSettings.larkCommand,
+        submit: personalSettings.submit === true,
+        targets: personalSettings.targets,
+      }
+    : undefined;
   const server = serveWorkbench({ home, port, token, bootcamp, personal });
   server.on("listening", async () => {
     const address = "http://" + HOST + ":" + (server.address() as AddressInfo).port + "/#/?session=" + token;

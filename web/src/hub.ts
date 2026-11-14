@@ -6,7 +6,13 @@ export { HubError } from "./transport";
 const KEY_STORE = "agent-autoloop.owner-key";
 declare global {
   interface Window {
-    autoloopLocal?: { bootcamp: boolean; personal?: boolean };
+    autoloopLocal?: {
+      bootcamp: boolean;
+      personal?: boolean;
+      personalIntake?: boolean;
+      feishuIntake?: boolean;
+      personalTargets?: string[];
+    };
   }
 }
 export const local = window.autoloopLocal;
@@ -172,6 +178,15 @@ export const fetchPersonalTasks = (signal: AbortSignal) =>
   }>("/local/personal/tasks", { signal });
 export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
   call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });
+export const submitPersonalTask = (task: {
+  id: string;
+  text: string;
+  link: string;
+  plan: string;
+  node: string;
+  agent: string;
+  review: boolean;
+}) => post<{ id: string; state: string }>("/local/personal/tasks", task, 75000);
 export async function downloadPersonalFile(task: string, id: string, name: string) {
   const session = key.value;
   const response = await fetch(

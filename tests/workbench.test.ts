@@ -1,6 +1,7 @@
 // The local workbench must not forward cross-origin writes, expose the hub key, or change owner API semantics.
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { createServer } from "node:http";
 import { writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -23,6 +24,51 @@ const dashboard = serveWorkbench({ home, port: 0, token });
 let base: string;
 
 const origin = (server: typeof hub) => "http://127.0.0.1:" + (server.address() as AddressInfo).port;
+
+test("personal submission requires the local session and forwards only the validated task", async () => {
+  const received: unknown[] = [];
+  const backend = createServer(async (req, res) => {
+    assert.equal(req.headers.authorization, "Bearer personal-private-key");
+    assert.equal(req.url, "/personal/tasks");
+    const chunks: Buffer[] = [];
+    for await (const chunk of req) chunks.push(chunk);
+    received.push(JSON.parse(Buffer.concat(chunks).toString()));
+    res.writeHead(201, { "content-type": "application/json" });
+    res.end(JSON.stringify({ id: "personal-" + "a".repeat(24), state: "queued" }));
+  }).listen(0, "127.0.0.1");
+  await once(backend, "listening");
+  const client = serveWorkbench({
+    home,
+    port: 0,
+    token,
+    personal: { port: (backend.address() as AddressInfo).port, key: "personal-private-key", submit: true },
+  });
+  await once(client, "listening");
+  const address = origin(client);
+  const task = { id: "manual-1", text: "写一份摘要", link: "", plan: "", node: "desk", agent: "writer", review: true };
+  const post = (from: string, auth: string) =>
+    fetch(address + "/local/personal/tasks", {
+      method: "POST",
+      headers: { origin: from, authorization: "Bearer " + auth },
+      body: JSON.stringify(task),
+    });
+  try {
+    assert.equal((await post("https://elsewhere.example", token)).status, 403);
+    assert.equal((await post(address, "wrong")).status, 401);
+    assert.equal(received.length, 0);
+    assert.equal((await post(address, token)).status, 201);
+    assert.equal(received.length, 1);
+    assert.match((received[0] as { text: string }).text, /审核/);
+    const session = await (await fetch(address + "/local-session.js")).text();
+    assert.ok(!session.includes("personal-private-key"));
+    assert.match(session, /"personalIntake":true/);
+  } finally {
+    for (const server of [client, backend]) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+});
 
 before(async () => {
   await Promise.all([hub, dashboard].map((server) => server.listening || once(server, "listening")));
