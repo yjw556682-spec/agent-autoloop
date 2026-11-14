@@ -2,6 +2,8 @@
 
 用户请你装好 Agent 自动化中台。先安装，再走一遍提问和继续处理；能自己做的直接做。
 
+已有中台、只需此分支的新版小镇时，按[工作台说明](docs/workbench.md)单独启动网页入口。先核对[兼容矩阵](docs/workbench-architecture.md#部署与版本兼容)，不要为更新网页覆盖正在运行的中台或私有数据目录。
+
 ## 安装
 
 支持原生 Windows、macOS 和 Linux。需要 Node.js 24 或更新、Git，以及一个已经登录的命令行 Agent；macOS/Linux 还需要 curl。Windows 使用系统自带的 PowerShell 5.1、任务计划程序和 Windows Script Host（wscript）。

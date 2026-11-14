@@ -1,11 +1,26 @@
 // The overview: one rail of lines, the plate that blooms above the selected one, the launch control, and the legend.
 // A run is a line whose form says its state; an open card is the sodium doublet waiting on you.
 import { computed, defineComponent, nextTick, reactive, ref, watch } from "vue";
-import { answerCard, cancelRun, emitEvent, fetchWhy, type CardView, type RunView } from "./hub";
+import {
+  answerCard,
+  cancelRun,
+  emitEvent,
+  fetchWhy,
+  key,
+  local,
+  resolveCard,
+  type CardView,
+  type RunView,
+} from "./hub";
 import { connected, loadError, refresh, state } from "./session";
 import { marksOf, type Mark } from "./rail";
 import { autoSubject, LaunchHelp } from "./launch-help";
 import { timelineOf } from "./why";
+import { Operations, Workbench } from "./workbench";
+import { runStatus } from "./run-status";
+import { selected } from "./selection";
+import { createSubmission } from "./submission";
+import { Town } from "./town";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));
 
@@ -21,11 +36,13 @@ watch(marks, (now, was) => {
   if (fresh) setTimeout(() => landed.clear(), 700);
 });
 
-type Selected = { kind: "run" | "card"; id: number } | null;
-const selected = ref<Selected>(null);
+const historyRun = ref<RunView | null>(null);
+const detailZone = ref<HTMLElement | null>(null);
+const revealDetail = () => void nextTick(() => detailZone.value?.scrollIntoView({ block: "nearest" }));
 const railEl = ref<HTMLElement | null>(null);
 const pointer = ref(50);
 const pointerColor = ref("var(--hair)");
+const showSpectrum = ref(false);
 // The waiting card blooms on its own until the person sends it away; a different waiting card earns the attention back.
 const dismissed = ref<number | null>(null);
 
@@ -60,8 +77,13 @@ function choose(mark: Mark) {
 }
 
 watch(marks, (list) => {
-  const waiting = list.find((mark) => mark.form === "waiting");
-  if (waiting && dismissed.value !== waiting.id && selected.value === null) void nextTick(() => choose(waiting));
+  if (selected.value?.kind === "card" && !list.some((mark) => mark.key === "card:" + selected.value!.id))
+    selected.value = null;
+  const waiting = list.find((mark) => mark.form === "waiting" && mark.id !== dismissed.value);
+  if (waiting && selected.value === null)
+    void nextTick(() => {
+      if (selected.value === null && marks.value.some((mark) => mark.key === waiting.key)) choose(waiting);
+    });
 });
 
 const selectedCard = computed(() => {
@@ -70,77 +92,107 @@ const selectedCard = computed(() => {
 });
 const selectedRun = computed(() => {
   if (selected.value?.kind !== "run") return null;
-  return state.value?.runs.find((run) => run.id === selected.value!.id) ?? null;
+  return (
+    state.value?.runs.find((run) => run.id === selected.value!.id) ??
+    (historyRun.value?.id === selected.value.id ? historyRun.value : null)
+  );
 });
 watch([selectedCard, selectedRun], () => void nextTick(placePointer), { flush: "post" });
-
-/** The board's one interaction: a click there lands here with the plate already bloomed. */
-export function openMarkPlate(key: string) {
-  selected.value = key.startsWith("card:")
-    ? { kind: "card", id: Number(key.slice(5)) }
-    : { kind: "run", id: Number(key.slice(4)) };
-  const mark = marks.value.find((one) => one.key === key);
-  if (mark) {
-    if (mark.form === "waiting") dismissed.value = mark.id;
-    pointerColor.value = mark.form === "waiting" || mark.form === "notice" ? "var(--sodium)" : "var(--hair)";
-  }
-  void nextTick(() => (location.hash = "#/"));
-}
 
 /* ---------- answering: the sodium line hands its charge back to the rail ---------- */
 
 const busy = ref(false);
 const words = ref("");
 const mistake = ref("");
+const resolving = ref(false);
+const feedback = ref("");
+let actionSession = 0;
+watch(selected, () => {
+  words.value = mistake.value = "";
+  resolving.value = false;
+  const mark = marks.value.find((one) => one.key === selected.value?.kind + ":" + selected.value?.id);
+  if (mark) {
+    if (mark.form === "waiting") dismissed.value = mark.id;
+    pointerColor.value = mark.form === "waiting" || mark.form === "notice" ? "var(--sodium)" : "var(--hair)";
+  }
+});
 
 const press = async (card: CardView, body: { choice?: number; text?: string }) => {
   if (busy.value) return;
   busy.value = true;
+  const session = actionSession;
+  const selection = selected.value;
   mistake.value = "";
   try {
-    await answerCard(card.id, body);
-    words.value = "";
-    selected.value = null;
-    dismissed.value = null;
+    const result = resolving.value ? await resolveCard(card.id, body.text ?? "") : await answerCard(card.id, body);
+    if (session !== actionSession) return;
+    feedback.value = result.changed ? "卡片 #" + card.id + " 已处理。" : "卡片 #" + card.id + " 已在其他地方处理。";
+    if (selected.value === selection) {
+      words.value = "";
+      selected.value = null;
+      dismissed.value = null;
+    }
     await refresh();
   } catch (error) {
-    mistake.value = error instanceof Error ? error.message : "没答上，再试一次。";
+    if (session === actionSession && selected.value === selection)
+      mistake.value = error instanceof Error ? error.message : "没答上，再试一次。";
   }
-  busy.value = false;
+  if (session === actionSession) busy.value = false;
 };
 
 /* ---------- the run's plate: its own facts, told from the log ---------- */
 
 const lines = ref<string[]>([]);
 const showing = ref(false);
-// The why log is prefetched the moment a plate opens and cached for the session: clicking 看经过
-// should render instantly, and the fetch latency hides behind the plate bloom.
-const whyCache = new Map<number, string[]>();
-watch(selectedRun, async (run) => {
-  showing.value = false;
-  lines.value = whyCache.get(run?.id ?? -1) ?? [];
-  if (!run || whyCache.has(run.id)) return;
+// Start loading the timeline as soon as its plate opens.
+const logError = ref("");
+const logLoading = ref(false);
+let logRequest = 0;
+async function loadTimeline() {
+  const ticket = ++logRequest;
+  const run = selectedRun.value;
+  lines.value = [];
+  logError.value = "";
+  logLoading.value = Boolean(run);
+  if (!run) return;
   try {
     const told = timelineOf(run.id, await fetchWhy(run.id));
-    whyCache.set(run.id, told);
-    if (selectedRun.value?.id === run.id) lines.value = told;
+    if (ticket === logRequest) lines.value = told;
   } catch {
-    whyCache.set(run.id, ["读不日志，稍后再试。"]);
-    if (selectedRun.value?.id === run.id) lines.value = whyCache.get(run.id)!;
+    if (ticket === logRequest) logError.value = "日志读取失败，请重试。";
+  } finally {
+    if (ticket === logRequest) logLoading.value = false;
   }
-});
+}
+watch(
+  () => selectedRun.value?.id,
+  () => {
+    showing.value = false;
+    void loadTimeline();
+  },
+);
+watch(
+  () => [selectedRun.value?.state, selectedRun.value?.attempts, selectedRun.value?.stopping].join(":"),
+  () => {
+    if (showing.value) void loadTimeline();
+  },
+);
 
 const stopping = ref(false);
 const stop = async (run: RunView) => {
   if (stopping.value) return;
   stopping.value = true;
+  const session = actionSession;
   try {
+    mistake.value = "";
     await cancelRun(run.id);
+    if (session !== actionSession) return;
+    feedback.value = "已提交停止请求 · 第 " + run.id + " 轮。";
     await refresh();
   } catch (error) {
-    mistake.value = error instanceof Error ? error.message : "没停成。";
+    if (session === actionSession) mistake.value = error instanceof Error ? error.message : "没停成。";
   }
-  stopping.value = false;
+  if (session === actionSession) stopping.value = false;
 };
 
 /* ---------- launch ---------- */
@@ -148,6 +200,8 @@ const stop = async (run: RunView) => {
 // Types the person can pick: the manual door plus whatever the owner's own rules listen for.
 // A wildcard pattern like manual.* becomes a concrete default (manual.task) — the protocol
 // refuses "*" in a type, and the drop-down hands out real types only.
+// This is an intake rule check, not runtime capability negotiation. Unsupported hubs return a clear API error.
+const hasManualIntake = computed(() => !local || (state.value?.lines ?? []).some((line) => line.source === "owner"));
 const typeOptions = computed(() => {
   const list = new Set<string>(["manual.task"]);
   for (const line of state.value?.lines ?? [])
@@ -170,20 +224,25 @@ const chatLaunch = (chatType: string, chatSubject: string, chatSummary: string) 
   summary.value = chatSummary;
   void launch();
 };
+const submission = createSubmission();
 const launch = async () => {
   if (!effectiveType.value || busy.value) return;
   busy.value = true;
+  const session = actionSession;
   noteBad.value = false;
   try {
-    const answer = await emitEvent({
-      id: crypto.randomUUID?.() ?? `web-${Date.now()}-${Math.floor(Math.random() * 1e6)}`,
-      type: effectiveType.value,
-      ...(subject.value.trim() && { subject: subject.value.trim() }),
-      ...(summary.value.trim() && { summary: summary.value.trim() }),
-    });
+    const answer = await emitEvent(
+      submission.prepare({
+        type: effectiveType.value,
+        ...(subject.value.trim() && { subject: subject.value.trim() }),
+        ...(summary.value.trim() && { summary: summary.value.trim() }),
+      }),
+    );
+    if (session !== actionSession) return;
+    submission.accepted();
     note.value = answer.routed.length
       ? `交给了：${answer.routed.join("、")}`
-      : "记下了，还没有规则接它。owner 来源只接 when.source 为 owner 的规则；类型从下拉框里选就一定有规则接。";
+      : "记下了，还没有规则接它。owner 来源只接 when.source 为 owner 的规则；请检查来源、事件类型及规则是否暂停。";
     noteBad.value = !answer.routed.length;
     typeChoice.value = typeOptions.value[0] ?? "manual.task";
     customType.value = "";
@@ -191,38 +250,44 @@ const launch = async () => {
     summary.value = "";
     await refresh();
   } catch (error) {
+    if (session !== actionSession) return;
     note.value = error instanceof Error ? error.message : "没发出去。";
     noteBad.value = true;
   }
-  busy.value = false;
+  if (session === actionSession) busy.value = false;
 };
+
+watch(
+  key,
+  () => {
+    actionSession++;
+    logRequest++;
+    selected.value = historyRun.value = null;
+    dismissed.value = null;
+    words.value = mistake.value = feedback.value = note.value = summary.value = customType.value = logError.value = "";
+    busy.value = stopping.value = resolving.value = showing.value = logLoading.value = noteBad.value = false;
+    lines.value = [];
+    landed.clear();
+    subject.value = autoSubject();
+    typeChoice.value = "manual.task";
+    submission.accepted();
+  },
+  { flush: "sync" },
+);
 
 /* ---------- 发射记录: the person's own launched tasks, newest first, one tap to the plate ---------- */
 
-const STATE_WORDS: Record<string, string> = {
-  queued: "排队",
-  claimed: "在跑",
-  unknown: "不确定",
-  done: "完成",
-  nothing: "没事可做",
-  cancelled: "已停止",
-};
-const stateWord = (run: RunView) =>
-  run.stopping
-    ? "正在停"
-    : run.state === "queued" && run.attempts > 0
-      ? "等重派"
-      : (STATE_WORDS[run.state] ?? run.state);
-const taskText = (run: RunView) => {
-  const own = (run.events ?? []).find((event) => event.source === "owner");
-  return own?.summary || own?.subject || run.summary || run.error || "（无说明）";
-};
-const mine = computed(() =>
-  (state.value?.runs ?? []).filter((run) => (run.events ?? []).some((event) => event.source === "owner")).slice(0, 5),
-);
-const openRun = (id: number) => {
-  const mark = marks.value.find((one) => one.key === `run:${id}`);
+const openRun = (run: RunView) => {
+  historyRun.value = run;
+  const mark = marks.value.find((one) => one.key === "run:" + run.id);
   if (mark) choose(mark);
+  else selected.value = { kind: "run", id: run.id };
+  revealDetail();
+};
+const openCard = (id: number) => {
+  const mark = marks.value.find((one) => one.key === "card:" + id);
+  if (mark) choose(mark);
+  revealDetail();
 };
 
 /* ---------- legend ---------- */
@@ -245,268 +310,342 @@ export const Overview = defineComponent({
       const card = selectedCard.value;
       const run = selectedRun.value;
       return (
-        <div class={["shell", !connected.value && "lost"]}>
+        <div class={["shell", "console", "town-console", !connected.value && "lost"]}>
           <header class="bar">
-            <span class="name">Agent Autoloop</span>
+            <a class="brand" href="#/">
+              <span aria-hidden="true" class="brand-spectrum" />
+              <span class="name">Agent Autoloop</span>
+            </a>
             <div class="facts">
-              <span>
-                <span class={["dot", connected.value ? "on" : "off"]} />
-                {connected.value ? "中台在线" : "连不上，重试中"}
-              </span>
               {all && (
                 <>
-                  <span>
-                    今日完成 <b>{all.totals.doneToday}</b> 轮 · <b>{money(all.spending.today.cost)}</b>
-                  </span>
-                  <span>
-                    7 天 <b>{money(all.spending.week.cost)}</b>
-                  </span>
-                  <a href="#/board" style={{ color: "var(--ink-mid)" }}>
-                    大屏
+                  <a class="board-link" href="#/board">
+                    谱线大屏 <span aria-hidden="true">↗</span>
                   </a>
                 </>
               )}
             </div>
           </header>
-          {!connected.value && <div class="banner">中台连不上了，正在重试。下面是最后一次看到的样子。</div>}
+          {!connected.value && (
+            <div class="banner" role="status">
+              与中台断开，正在重连。{all && "当前显示上次状态。"}
+            </div>
+          )}
           <main class="stage">
-            <div class="plate-zone">
-              {card && (
-                <div
-                  class="plate"
-                  style={{ "--pointer": `${pointer.value}%`, "--pointer-color": "var(--sodium)" } as any}
-                >
-                  <div class="head">
-                    <span class="num">
-                      卡片 #{card.id} · {card.kind === "ask" ? "等你决定" : "要你留意"}
-                    </span>
-                    <span class="sub">{card.rule}</span>
-                  </div>
-                  <div class="body">{card.text || card.title}</div>
-                  {card.kind === "ask" && (
-                    <div class="options">
-                      {card.options.map((option, index) => (
-                        <button
-                          class={["act", card.recommend === index && "best", busy.value && "busy"]}
-                          onClick={() => press(card, { choice: index })}
-                        >
-                          {option}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div class="other">
-                    <input
-                      class="word"
-                      placeholder={card.kind === "ask" ? "都不选？写点别的想法" : "我实际怎么处理的（可不填）"}
-                      aria-label={card.kind === "ask" ? "别的想法" : "处理说明"}
-                      value={words.value}
-                      onInput={(event) => (words.value = (event.target as HTMLInputElement).value)}
-                      onKeydown={(event) =>
-                        event.key === "Enter" &&
-                        (card.kind === "notice" || words.value.trim() !== "") &&
-                        press(card, words.value.trim() ? { text: words.value.trim() } : {})
-                      }
-                    />
-                    <button
-                      class={["act", busy.value && "busy"]}
-                      onClick={() =>
-                        (card.kind === "notice" || words.value.trim() !== "") &&
-                        press(card, words.value.trim() ? { text: words.value.trim() } : {})
-                      }
-                    >
-                      {card.kind === "ask" ? "发送" : "记录并结案"}
-                    </button>
-                  </div>
-                  {mistake.value && <div class="mistake">{mistake.value}</div>}
-                </div>
+            <div class="console-title">
+              <div>
+                <h1>Autoloop 小镇</h1>
+                <p>从任务进站，到 Agent 接手和回报</p>
+              </div>
+              {all && (
+                <span>
+                  今日完成 <b>{all.totals.doneToday}</b> · 近 7 天 {money(all.spending.week.cost)}
+                </span>
               )}
-              {run && (
-                <div
-                  class="plate"
-                  style={{ "--pointer": `${pointer.value}%`, "--pointer-color": pointerColor.value } as any}
-                >
-                  <div class="head">
-                    <span class="num">第 {run.id} 轮</span>
-                    <span class="sub">
-                      {run.rule} ·{" "}
-                      {run.stopping
-                        ? "正在停"
-                        : run.state === "queued" && run.attempts > 0
-                          ? "等重派"
-                          : ({
-                              queued: "排队",
-                              claimed: "在跑",
-                              unknown: "不确定",
-                              done: "完成",
-                              nothing: "没事可做",
-                              cancelled: "已停止",
-                            }[run.state] ?? run.state)}
-                    </span>
-                  </div>
-                  {(run.summary || run.error) && <div class="body">{run.summary || run.error}</div>}
-                  <div class="meta">
-                    <span>
-                      Agent <b>{run.agent}</b>
-                    </span>
-                    {run.usage && (
-                      <span>
-                        用量{" "}
-                        <b>
-                          {((run.usage.input ?? 0) + (run.usage.output ?? 0)).toLocaleString()} token ·{" "}
-                          {money(run.usage.cost ?? 0)}
-                        </b>
+            </div>
+            {all && (
+              <Town
+                snapshot={all}
+                openRun={openRun}
+                openCard={openCard}
+                manualIntake={hasManualIntake.value}
+                bootcampIntake={Boolean(
+                  local?.bootcamp && all.lines.some((line) => line.types.includes("bootcamp.draft.requested")),
+                )}
+              />
+            )}
+            {!all && (
+              <p class="bench-empty" role="status">
+                {loadError.value || "正在读取中台…"}
+              </p>
+            )}
+            <section class={["spectrum-panel", "town-detail"]} aria-label="运行详情及谱线">
+              <button
+                class="spectrum-toggle"
+                aria-expanded={showSpectrum.value}
+                aria-controls="overview-spectrum"
+                onClick={() => (showSpectrum.value = !showSpectrum.value)}
+              >
+                {showSpectrum.value ? "收起运行谱线" : "展开运行谱线"}
+              </button>
+              <div ref={detailZone} class={["plate-zone", !(card || run || showHelp.value) && "plate-empty"]}>
+                {card && (
+                  <div
+                    class="plate"
+                    style={{ "--pointer": `${pointer.value}%`, "--pointer-color": "var(--sodium)" } as any}
+                  >
+                    <div class="head">
+                      <span class="num">
+                        卡片 #{card.id} · {card.kind === "ask" ? "等你决定" : "要你留意"}
                       </span>
-                    )}
-                    {run.state === "queued" && run.attempts > 0 && (
-                      <span>
-                        第 {run.attempts + 1} 次尝试，{new Date(run.notBefore).toLocaleString()} 再来
-                      </span>
-                    )}
-                  </div>
-                  {run.events.length > 0 && (
-                    <div class="meta" style={{ flexDirection: "column", gap: "2px", alignItems: "flex-start" }}>
-                      {run.events.map((event) => (
-                        <span>
-                          {event.type}
-                          {event.subject && ` · ${event.subject}`}
-                          {event.summary && ` · ${event.summary}`}
-                        </span>
-                      ))}
+                      <span class="sub">{card.rule}</span>
                     </div>
-                  )}
-                  <div class="other">
-                    {!run.stopping && ["queued", "claimed", "unknown"].includes(run.state) && (
-                      <button class="act quiet" disabled={stopping.value} onClick={() => stop(run)}>
-                        {stopping.value ? "正在停…" : "停这一轮"}
-                      </button>
+                    <div class="body">
+                      <strong>{card.title}</strong>
+                      {card.text && card.text !== card.title && <div>{card.text}</div>}
+                    </div>
+                    {card.kind === "ask" && !resolving.value && (
+                      <div class="options">
+                        {card.options.map((option, index) => (
+                          <button
+                            class={["act", card.recommend === index && "best", busy.value && "busy"]}
+                            disabled={busy.value}
+                            onClick={() => press(card, { choice: index })}
+                          >
+                            {option}
+                          </button>
+                        ))}
+                      </div>
                     )}
-                    <button class="act quiet" onClick={() => (showing.value = !showing.value)}>
-                      {showing.value ? "收起经过" : "看经过"}
-                    </button>
-                    <button
-                      class="act quiet"
-                      onClick={() => {
-                        selected.value = null;
-                        dismissed.value = -1;
-                      }}
-                    >
-                      收起
-                    </button>
+                    <div class="other">
+                      <input
+                        class="word"
+                        placeholder={
+                          resolving.value
+                            ? "结案原因（必填）"
+                            : card.kind === "ask"
+                              ? "输入其他回复"
+                              : "处理说明（选填）"
+                        }
+                        aria-label={resolving.value ? "结案原因" : card.kind === "ask" ? "别的想法" : "处理说明"}
+                        value={words.value}
+                        onInput={(event) => (words.value = (event.target as HTMLInputElement).value)}
+                        onKeydown={(event) =>
+                          event.key === "Enter" &&
+                          ((!resolving.value && card.kind === "notice") || words.value.trim() !== "") &&
+                          press(card, words.value.trim() ? { text: words.value.trim() } : {})
+                        }
+                      />
+                      <button
+                        class={["act", busy.value && "busy"]}
+                        disabled={busy.value}
+                        onClick={() =>
+                          ((!resolving.value && card.kind === "notice") || words.value.trim() !== "") &&
+                          press(card, words.value.trim() ? { text: words.value.trim() } : {})
+                        }
+                      >
+                        {resolving.value ? "确认结案" : card.kind === "ask" ? "发送" : "记录并结案"}
+                      </button>
+                    </div>
+                    <div class="other">
+                      {card.kind === "ask" && (
+                        <button
+                          class="act quiet"
+                          disabled={busy.value}
+                          onClick={() => {
+                            resolving.value = !resolving.value;
+                            words.value = mistake.value = "";
+                          }}
+                        >
+                          {resolving.value ? "返回回复" : "填写原因并结案"}
+                        </button>
+                      )}
+                      <button class="act quiet" disabled={busy.value} onClick={() => (selected.value = null)}>
+                        收起
+                      </button>
+                    </div>
+                    {mistake.value && (
+                      <div class="mistake" role="alert">
+                        {mistake.value}
+                      </div>
+                    )}
                   </div>
-                  {showing.value && (
-                    <div class="tline">
-                      {lines.value.length ? (
-                        lines.value.map((line) => {
-                          const at = line.indexOf("  ");
-                          return (
-                            <div>
-                              <span class="t">{line.slice(0, at)}</span>
-                              {line.slice(at)}
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <span>正在读日志，几秒内就好…</span>
+                )}
+                {run && (
+                  <div
+                    class="plate"
+                    style={{ "--pointer": `${pointer.value}%`, "--pointer-color": pointerColor.value } as any}
+                  >
+                    <div class="head">
+                      <span class="num">第 {run.id} 轮</span>
+                      <span class="sub">
+                        {run.rule} · {runStatus(run)}
+                      </span>
+                    </div>
+                    {(run.summary || run.error) && <div class="body">{run.summary || run.error}</div>}
+                    <div class="meta">
+                      <span>
+                        Agent <b>{run.agent}</b>
+                      </span>
+                      {run.usage && (
+                        <span>
+                          用量{" "}
+                          <b>
+                            {((run.usage.input ?? 0) + (run.usage.output ?? 0)).toLocaleString()} token ·{" "}
+                            {money(run.usage.cost ?? 0)}
+                          </b>
+                        </span>
+                      )}
+                      {run.state === "queued" && run.attempts > 0 && (
+                        <span>
+                          第 {run.attempts + 1} 次尝试，{new Date(run.notBefore).toLocaleString()} 再来
+                        </span>
                       )}
                     </div>
-                  )}
+                    {run.events.length > 0 && (
+                      <div class="meta" style={{ flexDirection: "column", gap: "2px", alignItems: "flex-start" }}>
+                        {run.events.map((event) => (
+                          <span>
+                            {event.type}
+                            {event.subject && ` · ${event.subject}`}
+                            {event.summary && ` · ${event.summary}`}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div class="other">
+                      {!run.stopping && ["queued", "claimed", "unknown"].includes(run.state) && (
+                        <button class="act quiet" disabled={stopping.value} onClick={() => stop(run)}>
+                          {stopping.value ? "正在停…" : "停这一轮"}
+                        </button>
+                      )}
+                      <button class="act quiet" onClick={() => (showing.value = !showing.value)}>
+                        {showing.value ? "收起经过" : "看经过"}
+                      </button>
+                      <button
+                        class="act quiet"
+                        onClick={() => {
+                          selected.value = null;
+                          feedback.value = "";
+                        }}
+                      >
+                        收起
+                      </button>
+                    </div>
+                    {mistake.value && (
+                      <div class="mistake" role="alert">
+                        {mistake.value}
+                      </div>
+                    )}
+                    {showing.value && (
+                      <div class="tline">
+                        {logError.value ? (
+                          <button class="act quiet" onClick={loadTimeline}>
+                            {logError.value}
+                          </button>
+                        ) : lines.value.length ? (
+                          lines.value.map((line) => {
+                            const at = line.indexOf("  ");
+                            return (
+                              <div>
+                                <span class="t">{line.slice(0, at)}</span>
+                                {line.slice(at)}
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <span>{logLoading.value ? "正在读取经过…" : "这轮暂时没有可显示的经过。"}</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {showHelp.value && <LaunchHelp options={typeOptions.value} onLaunch={chatLaunch} />}
+              </div>
+              <div id="overview-spectrum" hidden={!showSpectrum.value}>
+                <div class="spectrum-head">
+                  <span>实线 · 进行中</span>
+                  <span>短线 · 历史</span>
+                  <span class="legend-attention">双线 · 待回复</span>
                 </div>
-              )}
-              {showHelp.value && <LaunchHelp options={typeOptions.value} onLaunch={chatLaunch} />}
-            </div>
-            {all && mine.value.length > 0 && (
-              <div class="mine">
-                <div class="mine-head">发射记录 · 点一行看经过</div>
-                {mine.value.map((run) => (
-                  <button key={run.id} class="mine-row" onClick={() => openRun(run.id)}>
-                    <span class="mine-state">{stateWord(run)}</span>
-                    <span class="mine-text">{taskText(run)}</span>
-                    <span class="mine-id">#{run.id}</span>
-                  </button>
-                ))}
+                {all && marks.value.length === 0 && <p class="bench-empty spectrum-empty">还没有运行记录。</p>}
+                <div class="rail-wrap">
+                  <div class="rail" ref={railEl}>
+                    {marks.value.map((mark) => (
+                      <button
+                        key={mark.key}
+                        data-key={mark.key}
+                        class={[
+                          "rail-line",
+                          selected.value && `${selected.value.kind}:${selected.value.id}` === mark.key && "selected",
+                        ]}
+                        title={mark.title}
+                        aria-label={`${mark.rule} ${mark.label} ${mark.title !== mark.rule ? mark.title : ""}`}
+                        onClick={() => choose(mark)}
+                      >
+                        <span class="stem-slot">
+                          <span
+                            class={["stem", mark.form, landed.has(mark.key) && "land"]}
+                            style={{ "--wl": mark.wl } as any}
+                          />
+                          {mark.form === "waiting" && <span class="stem waiting" aria-hidden="true" />}
+                        </span>
+                        <span class="rail-tag">{mark.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div class="baseline" />
+                </div>
               </div>
+            </section>
+            {feedback.value && (
+              <p class="bench-feedback" role="status">
+                {feedback.value}
+              </p>
             )}
-            {all && marks.value.length === 0 && !showHelp.value && (
-              <div class="empty-hint">还没有轮次。发射一根线，或点「怎么填？」让指导带你走一遍。</div>
+            {all && (
+              <Workbench
+                snapshot={all}
+                selected={selected.value ? selected.value.kind + ":" + selected.value.id : ""}
+                openRun={openRun}
+                openCard={openCard}
+              />
             )}
-            <div class="rail-wrap">
-              <div class="rail" ref={railEl}>
-                {marks.value.map((mark) => (
-                  <button
-                    key={mark.key}
-                    data-key={mark.key}
-                    class={[
-                      "rail-line",
-                      selected.value && `${selected.value.kind}:${selected.value.id}` === mark.key && "selected",
-                    ]}
-                    title={mark.title}
-                    aria-label={`${mark.rule} ${mark.label} ${mark.title !== mark.rule ? mark.title : ""}`}
-                    onClick={() => choose(mark)}
-                  >
-                    <span class="stem-slot">
-                      <span
-                        class={["stem", mark.form, landed.has(mark.key) && "land"]}
-                        style={{ "--wl": mark.wl } as any}
-                      />
-                      {mark.form === "waiting" && <span class="stem waiting" aria-hidden="true" />}
-                    </span>
-                    <span class="rail-tag">{mark.label}</span>
-                  </button>
-                ))}
-              </div>
-              <div class="baseline" />
-            </div>
-            <div class="launch">
-              <select
-                class="word type"
-                value={typeChoice.value}
-                aria-label="事件类型"
-                onChange={(event) => (typeChoice.value = (event.target as HTMLSelectElement).value)}
-              >
-                {typeOptions.value.map((one) => (
-                  <option value={one}>{one}</option>
-                ))}
-                <option value="__custom__">自定义…</option>
-              </select>
-              {typeChoice.value === "__custom__" && (
-                <input
+            {all && <Operations snapshot={all} />}
+            {hasManualIntake.value && (
+              <div class="launch" id="manual-event" tabindex="-1">
+                <select
                   class="word type"
-                  placeholder="manual.你的类型"
-                  aria-label="自定义事件类型"
-                  value={customType.value}
-                  onInput={(event) => (customType.value = (event.target as HTMLInputElement).value)}
+                  value={typeChoice.value}
+                  aria-label="事件类型"
+                  onChange={(event) => (typeChoice.value = (event.target as HTMLSelectElement).value)}
+                >
+                  {typeOptions.value.map((one) => (
+                    <option value={one}>{one}</option>
+                  ))}
+                  <option value="__custom__">自定义…</option>
+                </select>
+                {typeChoice.value === "__custom__" && (
+                  <input
+                    class="word type"
+                    placeholder="manual.你的类型"
+                    aria-label="自定义事件类型"
+                    value={customType.value}
+                    onInput={(event) => (customType.value = (event.target as HTMLInputElement).value)}
+                    onKeydown={(event) => event.key === "Enter" && launch()}
+                  />
+                )}
+                <input
+                  class="word"
+                  style={{ flex: "0 1 170px" }}
+                  placeholder="对象 #编号"
+                  aria-label="对象"
+                  value={subject.value}
+                  onInput={(event) => (subject.value = (event.target as HTMLInputElement).value)}
                   onKeydown={(event) => event.key === "Enter" && launch()}
                 />
-              )}
-              <input
-                class="word"
-                style={{ flex: "0 1 170px" }}
-                placeholder="对象 #编号"
-                aria-label="对象"
-                value={subject.value}
-                onInput={(event) => (subject.value = (event.target as HTMLInputElement).value)}
-                onKeydown={(event) => event.key === "Enter" && launch()}
-              />
-              <input
-                class="word sum"
-                placeholder="要让 Agent 做什么？一句话说清"
-                aria-label="一句话说明"
-                value={summary.value}
-                onInput={(event) => (summary.value = (event.target as HTMLInputElement).value)}
-                onKeydown={(event) => event.key === "Enter" && launch()}
-              />
-              <button
-                class={["act", "quiet", showHelp.value && "best-quiet"]}
-                onClick={() => (showHelp.value = !showHelp.value)}
-              >
-                {showHelp.value ? "收起指导" : "怎么填？"}
-              </button>
-              <button class={["act", "best", busy.value && "busy"]} onClick={launch}>
-                发射
-              </button>
-              <span class={["note", noteBad.value && "err"]}>{note.value}</span>
-            </div>
+                <input
+                  class="word sum"
+                  placeholder="要让 Agent 做什么？一句话说清"
+                  aria-label="一句话说明"
+                  value={summary.value}
+                  onInput={(event) => (summary.value = (event.target as HTMLInputElement).value)}
+                  onKeydown={(event) => event.key === "Enter" && launch()}
+                />
+                <button
+                  class={["act", "quiet", showHelp.value && "best-quiet"]}
+                  onClick={() => (showHelp.value = !showHelp.value)}
+                >
+                  {showHelp.value ? "收起指导" : "怎么填？"}
+                </button>
+                <button class={["act", "best", busy.value && "busy"]} onClick={launch}>
+                  发射
+                </button>
+                <span class={["note", noteBad.value && "err"]} role="status">
+                  {note.value}
+                </span>
+              </div>
+            )}
           </main>
           <footer class="legend">
             <div class="key">
@@ -538,18 +677,9 @@ export const Overview = defineComponent({
                   </>
                 )}
                 <span class="gap">|</span>
-                {workers.value.map(([name, online]) => (
-                  <span class="tick">
-                    <span class={["dot", online ? "on" : "off"]} />
-                    {name}
-                  </span>
-                ))}
-                {all.channels.map((channel) => (
-                  <span class="tick">
-                    <span class={["dot", channel.online ? "on" : "off"]} />
-                    {channel.name}
-                  </span>
-                ))}
+                <span>
+                  {workers.value.filter(([, online]) => online).length}/{workers.value.length} 接单程序在线
+                </span>
               </>
             )}
           </footer>

@@ -57,6 +57,6 @@ export function marksOf(all: State): Mark[] {
   ];
   return list
     .filter((mark) => mark.form !== "stub")
-    .concat(list.filter((mark) => mark.form === "stub").slice(-STUBS_KEPT))
+    .concat(list.filter((mark) => mark.form === "stub").slice(0, STUBS_KEPT))
     .sort((a, b) => a.at - b.at || a.id - b.id);
 }
