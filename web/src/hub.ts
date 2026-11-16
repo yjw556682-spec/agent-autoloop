@@ -174,7 +174,7 @@ export type PersonalDetails = PersonalTask & {
 export const fetchPersonalTasks = (signal: AbortSignal) =>
   call<{
     tasks: PersonalTask[];
-    devices: { name: string; online: boolean; agents: { id: string; use: string; mode: string }[] }[];
+    devices: { name: string; online: boolean; agents: { id: string; use: string; mode: string; model?: string }[] }[];
   }>("/local/personal/tasks", { signal });
 export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
   call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });

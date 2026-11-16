@@ -355,6 +355,7 @@ export const Overview = defineComponent({
                 )}
               />
             )}
+            {all && local?.personal && <Personal />}
             {!all && (
               <p class="bench-empty" role="status">
                 {loadError.value || "正在读取中台…"}
@@ -593,7 +594,6 @@ export const Overview = defineComponent({
               />
             )}
             {all && <Operations snapshot={all} />}
-            {all && local?.personal && <Personal />}
             {hasManualIntake.value && (
               <div class="launch" id="manual-event" tabindex="-1">
                 <select
