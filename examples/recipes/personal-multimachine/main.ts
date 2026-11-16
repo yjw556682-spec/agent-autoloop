@@ -8,7 +8,7 @@ import { baseUrl, label, supportsAgent } from "./data.ts";
 import { liteLLM } from "./gateway.ts";
 import { connectHub, personalRules, type ServiceConfig } from "./config.ts";
 import { createPersonalServer } from "./server.ts";
-import { listenFeishu } from "./feishu.ts";
+import { deliverFeishu, listenFeishu } from "./feishu.ts";
 
 const [command, file] = process.argv.slice(2);
 const config = file && JSON.parse(await readFile(file, "utf8"));
@@ -27,13 +27,21 @@ if (command === "rules" && config) {
   server.http.listen(settings.port ?? 3352, "127.0.0.1", () => console.log("个人多机服务已启动"));
   const signal = new AbortController();
   let retrying: Promise<void> | undefined;
+  let delivering: Promise<void> | undefined;
+  const feishu = settings.feishu;
   const timer = setInterval(() => {
     if (!retrying)
       retrying = server.retryPending().finally(() => {
         retrying = undefined;
       });
+    if (feishu && !delivering)
+      delivering = deliverFeishu(feishu, signal.signal, server.feishuDelivery)
+        .catch(() => console.error("飞书私聊交付暂不可用"))
+        .finally(() => {
+          delivering = undefined;
+        });
   }, 5000);
-  const listening = settings.feishu && listenFeishu(settings.feishu, signal.signal, server.submit, server.known);
+  const listening = feishu && listenFeishu(feishu, signal.signal, server.submitFromFeishu, server.known);
   listening?.catch(() => {
     console.error("飞书入口配置无效");
   });
@@ -42,6 +50,7 @@ if (command === "rules" && config) {
     signal.abort();
     await listening?.catch(() => {});
     await retrying;
+    await delivering;
     await server.close();
   };
   process.once("SIGINT", stop);

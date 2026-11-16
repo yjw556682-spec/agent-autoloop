@@ -123,6 +123,13 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     CREATE TABLE IF NOT EXISTS knowledge (
       id TEXT PRIMARY KEY, name TEXT NOT NULL, content BLOB NOT NULL, created INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS feishu_deliveries (
+      task TEXT PRIMARY KEY REFERENCES tasks(id), target TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS feishu_sent (
+      task TEXT NOT NULL REFERENCES feishu_deliveries(task), item TEXT NOT NULL,
+      PRIMARY KEY (task, item)
+    );
   `);
   const getTask = (id: string) => db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as Task | undefined;
   const getClaim = (run: number, attempt: number) =>
@@ -157,7 +164,7 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
       .all(task);
   }
 
-  async function submit(value: any) {
+  async function submit(value: any, feishuTarget?: string) {
     if (
       typeof value?.id !== "string" ||
       !value.id.trim() ||
@@ -232,15 +239,23 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
         );
         const { device, agent } = candidates[0];
         const input = JSON.stringify({ text: value.text, files: attachments, use: agent.use });
-        db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 'dispatching', NULL, ?)").run(
-          id,
-          fingerprint,
-          device.name,
-          agent.id,
-          agent.mode,
-          input,
-          Date.now(),
-        );
+        db.exec("BEGIN IMMEDIATE");
+        try {
+          db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 'dispatching', NULL, ?)").run(
+            id,
+            fingerprint,
+            device.name,
+            agent.id,
+            agent.mode,
+            input,
+            Date.now(),
+          );
+          if (feishuTarget) db.prepare("INSERT INTO feishu_deliveries VALUES (?, ?)").run(id, feishuTarget);
+          db.exec("COMMIT");
+        } catch (error) {
+          db.exec("ROLLBACK");
+          throw error;
+        }
         task = getTask(id)!;
       }
       return dispatch(task);
@@ -620,6 +635,42 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
   return {
     http,
     submit,
+    submitFromFeishu: (input: Parameters<typeof submit>[0], target: string) => submit(input, target),
+    feishuDelivery: {
+      pending(target: string) {
+        const tasks = db
+          .prepare(
+            `
+          SELECT tasks.id, tasks.run FROM tasks JOIN feishu_deliveries ON feishu_deliveries.task = tasks.id
+          WHERE target = ? AND tasks.state = 'done' AND NOT EXISTS (
+            SELECT 1 FROM feishu_sent WHERE task = tasks.id AND item = 'receipt'
+          ) ORDER BY tasks.created LIMIT 4
+        `,
+          )
+          .all(target) as { id: string; run: number }[];
+        return tasks.map(({ id, run }) => ({
+          id,
+          files: db
+            .prepare(
+              `
+            SELECT files.id, files.name FROM files JOIN claims USING (run, attempt)
+            WHERE files.task = ? AND files.run = ? AND claims.ack IS NOT NULL AND NOT EXISTS (
+              SELECT 1 FROM feishu_sent WHERE task = files.task AND item = files.id
+            ) ORDER BY files.name
+          `,
+            )
+            .all(id, run) as { id: string; name: string }[],
+        }));
+      },
+      read(id: string) {
+        const file = db.prepare("SELECT content FROM files WHERE id = ?").get(id);
+        if (!file) throw new Error("找不到待发成果");
+        return Buffer.from(file.content as Uint8Array);
+      },
+      mark(task: string, item: string) {
+        db.prepare("INSERT OR IGNORE INTO feishu_sent VALUES (?, ?)").run(task, item);
+      },
+    },
     retryPending,
     known(id: string) {
       const task = getTask(submissionId(id));

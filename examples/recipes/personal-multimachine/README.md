@@ -39,7 +39,7 @@ node --disable-warning=ExperimentalWarning --test tests/personal-integration.tes
 4. 每台电脑设置独立的 `AGENT_AUTOLOOP_HOME`，运行 `node examples/recipes/personal-multimachine/main.ts worker <执行机配置>`。为每个角色填写对应 CLI 的绝对路径。也可以指定官方 JS 或 CJS 入口，由 Node 启动。执行机容量默认为 1，每个角色独立排队，多个角色可按整机容量并行。测试用 `allowLoopback: true` 仅允许本机 HTTP。
 5. 服务器上为工作台设置 `AUTOLOOP_PERSONAL_CONFIG` 指向服务配置，使用已有工作台启动命令。通过 SSH 转发工作台端口，在“个人任务”看机器、角色、任务和下载。工作台对本人会话代理只读任务和成果入口。
 
-飞书配置使用独立的机器人资料目录。群消息订阅接收指定群内本人明确 @ 机器人的文本，云文档需要授予该应用读取权限。通过正式 Autoloop 的飞书通道处理私聊卡片，群入口与卡片通道使用不同事件键、同一 CLI 配置。群内只回任务编号，成果从本人小镇下载。正式环境启用前先在测试群核对读取权限和私聊回传。
+飞书配置使用独立的机器人资料目录。群消息订阅接收指定群内本人明确 @ 机器人的文本，云文档需要授予该应用读取权限。通过正式 Autoloop 的飞书通道处理私聊卡片，群入口与卡片通道使用不同事件键、同一 CLI 事件连接。开启时可指定 `feishu.route`，由 `node`、`agent` 固定执行器，由 `knowledge` 附加共享资料版本，由 `instruction` 附加本人规则。服务器保存接单编号和成果发送记录，已归档的完成附件、接单确认及任务编号只在本人私聊发送。小镇也可按任务编号下载。正式环境启用前在飞书开放平台发布「接收消息」订阅，并在测试群验收。
 
 ### 从本机工作台手动提交
 
