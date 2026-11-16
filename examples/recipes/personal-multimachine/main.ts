@@ -41,7 +41,14 @@ if (command === "rules" && config) {
           delivering = undefined;
         });
   }, 5000);
-  const listening = feishu && listenFeishu(feishu, signal.signal, server.submitFromFeishu, server.known);
+  const listening =
+    feishu &&
+    listenFeishu(
+      feishu,
+      signal.signal,
+      feishu.confirmInWorkbench ? server.receiveFromFeishu : server.submitFromFeishu,
+      server.known,
+    );
   listening?.catch(() => {
     console.error("飞书入口配置无效");
   });

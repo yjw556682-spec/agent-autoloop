@@ -185,6 +185,19 @@ export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
   call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });
 export const fetchPersonalKnowledge = (signal: AbortSignal) =>
   call<{ id: string; name: string; bytes: number }[]>("/local/personal/knowledge", { signal });
+export type InboxTask = {
+  id: string;
+  text: string;
+  source: string;
+  created: number;
+  files: { name: string; bytes: number }[];
+  knowledge: string[];
+};
+export const fetchInbox = (signal: AbortSignal) => call<InboxTask[]>("/local/personal/inbox", { signal });
+export const configureTask = (id: string, choice: { node: string; agent: string; model?: string }) =>
+  post<{ id: string; state: string }>("/local/personal/inbox/" + id + "/dispatch", choice, 75000);
+export const discardTask = (id: string) =>
+  post<{ id: string; state: string }>("/local/personal/inbox/" + id + "/discard", {});
 export const submitPersonalTask = (task: {
   id: string;
   text: string;

@@ -157,10 +157,14 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
       const personalRoute = /^\/local\/personal\/tasks(?:\/personal-[a-f0-9]{24}(?:\/files\/[a-f0-9]{64})?)?$/.test(
         path,
       );
+      const inboxAction = /^\/local\/personal\/inbox\/personal-[a-f0-9]{24}\/(dispatch|discard)$/.exec(path);
       if (
         personal &&
         req.method === "GET" &&
-        (personalRoute || path === "/local/personal/knowledge" || path === "/local/personal/gateway")
+        (personalRoute ||
+          path === "/local/personal/knowledge" ||
+          path === "/local/personal/gateway" ||
+          path === "/local/personal/inbox")
       ) {
         if (!authorized(req, token)) return error(res, 401, "请先打开工作台会话。");
         const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
@@ -190,6 +194,7 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           path === "/v1/emit" ||
           (submitPersonal && path === "/local/personal/tasks") ||
           (personal && ["/local/personal/gateway/default", "/local/personal/gateway/probe"].includes(path)) ||
+          (personal && inboxAction) ||
           (bootcamp && path === "/local/bootcamp"));
       if (!read && !write) return error(res, 404, "没有这个地址。");
       if (!authorized(req, token)) return error(res, 401, "请用启动工作台时显示的会话链接打开。");
@@ -227,7 +232,20 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           throw failure;
         }
       }
-      if (personal && ["/local/personal/gateway/default", "/local/personal/gateway/probe"].includes(path)) {
+      if (
+        personal &&
+        (inboxAction || ["/local/personal/gateway/default", "/local/personal/gateway/probe"].includes(path))
+      ) {
+        if (inboxAction?.[1] === "dispatch" && personal.targets) {
+          let choice: { node?: unknown; agent?: unknown };
+          try {
+            choice = JSON.parse(body!);
+          } catch {
+            return error(res, 400, "提交内容格式不正确。");
+          }
+          if (!choice || !personal.targets.includes(choice.node + "/" + choice.agent))
+            return error(res, 409, "这个入口尚未配置所选执行器。");
+        }
         const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
           method: "POST",
           headers: { authorization: "Bearer " + personal.key, "content-type": "application/json" },

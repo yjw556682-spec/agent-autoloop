@@ -56,7 +56,7 @@ export const Personal = defineComponent({
   setup() {
     const view = ref<Awaited<ReturnType<typeof fetchPersonalTasks>>>();
     const detail = ref<PersonalDetails>();
-    const chosen = ref("");
+    const chosen = ref(/^#\/task\/(personal-[a-f0-9]{24})$/.exec(location.hash)?.[1] ?? "");
     const message = ref("");
     const notice = ref("");
     const downloadMessage = ref("");
@@ -215,6 +215,7 @@ export const Personal = defineComponent({
       <section class="bench-section personal-desk" id="personal-desk" tabindex="-1">
         <div class="personal-desk-head">
           <h2>个人任务</h2>
+          <a href="#/dispatch">打开任务配置</a>
           <span>
             {view.value ? view.value.devices.filter((item) => item.online).length + " 台电脑在线" : "正在连接"}
           </span>

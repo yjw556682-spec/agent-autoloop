@@ -10,6 +10,7 @@ import { hash, Problem, safeName } from "./data.ts";
 
 type Identity = { group: string; owner: string; bot: string };
 export type Feishu = Identity & {
+  confirmInWorkbench?: boolean;
   program: string;
   profile?: string;
   route?: { node: string; agent: string; knowledge?: string[]; instruction?: string; link?: string };
@@ -247,9 +248,10 @@ export async function listenFeishu(
             route?.link,
           );
           if (!received) continue;
-          const text = route?.instruction
-            ? route.instruction + "\n\n本人在飞书提交的要求：\n" + received.text
-            : received.text;
+          const text =
+            !config.confirmInWorkbench && route?.instruction
+              ? route.instruction + "\n\n本人在飞书提交的要求：\n" + received.text
+              : received.text;
           const reply = await submit(
             { ...received, text, node: route?.node, agent: route?.agent, knowledge: route?.knowledge },
             target,
@@ -257,7 +259,14 @@ export async function listenFeishu(
           if (reply.status >= 300) throw new Error("中台没有确认接单");
           result = reply.body as { id: string; state: string };
         }
-        await notify(`已收到任务 ${result.id}。请在小镇查看进度。`, request.id + ":accepted");
+        await notify(
+          result.state === "awaiting-config"
+            ? `已收到任务 ${result.id}，等待你选择。请打开小镇「任务配置」，选择 Agent、模型和执行电脑后点「确认派发」。确认前不会启动 Agent。`
+            : result.state === "discarded"
+              ? `任务 ${result.id} 已忽略，没有派发。`
+              : `已收到任务 ${result.id}。请在小镇查看进度。`,
+          request.id + ":accepted",
+        );
       } catch {
         await notify(
           "飞书任务暂未确认接单。请检查方案是否授权给机器人，或到小镇查看是否已入队。",

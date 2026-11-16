@@ -37,34 +37,52 @@ test("gateway changes require the owner session and reject cross-origin requests
     home,
     port: 0,
     token,
-    personal: { port: (backend.address() as AddressInfo).port, key: "private-management" },
+    personal: { port: (backend.address() as AddressInfo).port, key: "private-management", targets: ["desk/coder"] },
   });
   await once(client, "listening");
   try {
-    const path = origin(client) + "/local/personal/gateway/default";
-    assert.equal((await fetch(path, { method: "POST", headers: { origin: origin(client) }, body: "{}" })).status, 401);
+    for (const suffix of ["gateway/default", "inbox/personal-" + "a".repeat(24) + "/dispatch"]) {
+      const path = origin(client) + "/local/personal/" + suffix;
+      const before = calls;
+      assert.equal(
+        (await fetch(path, { method: "POST", headers: { origin: origin(client) }, body: "{}" })).status,
+        401,
+      );
+      assert.equal(
+        (
+          await fetch(path, {
+            method: "POST",
+            headers: { authorization: "Bearer " + token, origin: "https://foreign.example" },
+            body: "{}",
+          })
+        ).status,
+        403,
+      );
+      assert.equal(calls, before);
+      assert.equal(
+        (
+          await fetch(path, {
+            method: "POST",
+            headers: { authorization: "Bearer " + token, origin: origin(client) },
+            body: JSON.stringify({ node: "desk", agent: "coder", model: "mini" }),
+          })
+        ).status,
+        200,
+      );
+      assert.equal(calls, before + 1);
+    }
+    const before = calls;
     assert.equal(
       (
-        await fetch(path, {
-          method: "POST",
-          headers: { authorization: "Bearer " + token, origin: "https://foreign.example" },
-          body: "{}",
-        })
-      ).status,
-      403,
-    );
-    assert.equal(calls, 0);
-    assert.equal(
-      (
-        await fetch(path, {
+        await fetch(origin(client) + "/local/personal/inbox/personal-" + "a".repeat(24) + "/dispatch", {
           method: "POST",
           headers: { authorization: "Bearer " + token, origin: origin(client) },
-          body: "{}",
+          body: JSON.stringify({ node: "other", agent: "coder" }),
         })
       ).status,
-      200,
+      409,
     );
-    assert.equal(calls, 1);
+    assert.equal(calls, before);
   } finally {
     for (const server of [client, backend]) {
       server.closeAllConnections();

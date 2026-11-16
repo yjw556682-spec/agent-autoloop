@@ -319,6 +319,11 @@ export const Overview = defineComponent({
               <span class="name">Agent Autoloop</span>
             </a>
             <div class="facts">
+              {local?.personal && (
+                <a class="board-link" href="#/dispatch">
+                  任务配置
+                </a>
+              )}
               {all && (
                 <>
                   <a class="board-link" href="#/board">

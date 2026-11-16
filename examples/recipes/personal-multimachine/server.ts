@@ -114,6 +114,10 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
     CREATE TABLE IF NOT EXISTS model_defaults (target TEXT PRIMARY KEY, model TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS model_checks (id TEXT PRIMARY KEY, result TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS inbox (
+      id TEXT PRIMARY KEY, input TEXT NOT NULL, target TEXT NOT NULL, created INTEGER NOT NULL,
+      discarded INTEGER NOT NULL DEFAULT 0
+    );
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, node TEXT NOT NULL, agent TEXT NOT NULL, mode TEXT NOT NULL,
       input TEXT NOT NULL, state TEXT NOT NULL, run INTEGER, created INTEGER NOT NULL
@@ -170,6 +174,77 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     `,
       )
       .all(task);
+  }
+
+  type Received = { id: string; text: string; files: { name: string; data: string }[]; knowledge: string[] };
+  type Inbox = { id: string; input: string; target: string; created: number; discarded: number };
+  const getInbox = (id: string) => db.prepare("SELECT * FROM inbox WHERE id=?").get(id) as Inbox | undefined;
+  async function receiveFromFeishu(input: unknown, target: string) {
+    const value = input as Partial<Received> | null;
+    if (
+      !value ||
+      typeof value.id !== "string" ||
+      !value.id.startsWith("feishu:") ||
+      value.id.length > 200 ||
+      typeof value.text !== "string" ||
+      !value.text.trim() ||
+      value.text.length > 100_000 ||
+      !target
+    )
+      throw new Problem(400, "需要飞书消息编号与任务要求");
+    const knowledge = value.knowledge ?? [];
+    if (
+      !Array.isArray(knowledge) ||
+      knowledge.length > 32 ||
+      knowledge.some((x) => typeof x !== "string" || !/^[0-9a-f]{64}$/.test(x))
+    )
+      throw new Problem(400, "资料引用无效");
+    const received: Received = { id: value.id, text: value.text, files: files(value.files ?? []), knowledge };
+    const id = submissionId(received.id);
+    return once("inbox:" + id, async () => {
+      const existing = getTask(id);
+      if (existing) return json({ id, state: existing.state });
+      // The first accepted document snapshot belongs to this message, even if a redelivery reads a newer revision.
+      db.prepare("INSERT OR IGNORE INTO inbox(id,input,target,created) VALUES (?,?,?,?)").run(
+        id,
+        JSON.stringify(received),
+        target,
+        Date.now(),
+      );
+      return json({ id, state: getInbox(id)!.discarded ? "discarded" : "awaiting-config" }, 201);
+    });
+  }
+
+  async function configureInbox(id: string, action: string, input: unknown) {
+    return once("inbox:" + id, async () => {
+      const draft = getInbox(id);
+      if (!draft) throw new Problem(404, "没有这份待配置任务");
+      if (action === "discard") {
+        if (getTask(id)) throw new Problem(409, "任务已经提交，请在任务进度里停止");
+        db.prepare("UPDATE inbox SET discarded=1 WHERE id=?").run(id);
+        return json({ id, state: "discarded" });
+      }
+      if (draft.discarded) throw new Problem(409, "这份任务已忽略");
+      const choice = input as { node?: unknown; agent?: unknown; model?: unknown } | null;
+      if (
+        !choice ||
+        typeof choice.node !== "string" ||
+        !label.test(choice.node) ||
+        typeof choice.agent !== "string" ||
+        !label.test(choice.agent)
+      )
+        throw new Problem(400, "请选择执行电脑与 Agent");
+      const received: Received = JSON.parse(draft.input);
+      return submit(
+        {
+          ...received,
+          node: choice.node,
+          agent: choice.agent,
+          ...(choice.model !== undefined && { model: choice.model }),
+        },
+        draft.target,
+      );
+    });
   }
 
   async function submit(value: any, feishuTarget?: string) {
@@ -563,6 +638,28 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     const path = url.pathname;
     if (method === "GET" && path === "/healthz") return json({ ok: true });
     if (key && equal(key, owner)) {
+      if (method === "GET" && path === "/personal/inbox")
+        return json(
+          (
+            db
+              .prepare(
+                "SELECT inbox.* FROM inbox LEFT JOIN tasks USING(id) WHERE tasks.id IS NULL AND discarded=0 ORDER BY inbox.created LIMIT 100",
+              )
+              .all() as Inbox[]
+          ).map((item) => {
+            const input: Received = JSON.parse(item.input);
+            return {
+              id: item.id,
+              text: input.text,
+              created: item.created,
+              source: "飞书",
+              knowledge: input.knowledge,
+              files: input.files.map((f) => ({ name: f.name, bytes: Buffer.byteLength(f.data, "base64") })),
+            };
+          }),
+        );
+      const inboxPath = /^\/personal\/inbox\/(personal-[a-f0-9]{24})\/(dispatch|discard)$/.exec(path);
+      if (method === "POST" && inboxPath) return configureInbox(inboxPath[1], inboxPath[2], await body(req));
       if (method === "GET" && path === "/personal/gateway") {
         if (!gateway) return json({ configured: false, bindings: [] });
         if (!gateway.status) throw new Problem(503, "当前网关尚不支持管理视图");
@@ -712,6 +809,7 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
   return {
     http,
     submit,
+    receiveFromFeishu,
     submitFromFeishu: (input: Parameters<typeof submit>[0], target: string) => submit(input, target),
     feishuDelivery: {
       pending(target: string) {
@@ -751,7 +849,9 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     retryPending,
     known(id: string) {
       const task = getTask(submissionId(id));
-      return task && { id: task.id, state: task.state };
+      if (task) return { id: task.id, state: task.state };
+      const draft = getInbox(submissionId(id));
+      return draft && { id: draft.id, state: draft.discarded ? "discarded" : "awaiting-config" };
     },
     async close() {
       await new Promise<void>((resolve) => {
