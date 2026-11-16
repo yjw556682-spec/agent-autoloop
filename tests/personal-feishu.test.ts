@@ -36,3 +36,20 @@ test("only an explicit task from the configured owner and group is read", async 
   assert.match(Buffer.from(task!.files[0].data, "base64").toString(), /方案原文/);
   assert.match(Buffer.from(task!.files[0].data, "base64").toString(), /版本：2/);
 });
+
+test("a configured plan survives Feishu's rich link with trailing copied prose", async () => {
+  const plan = "https://example.feishu.cn/docx/Plan";
+  const read: string[] = [];
+  const event = { ...message, content: `@助理 请做三份稿 [${plan}」](${plan}%E3%80%8D%E3%80%82%E6%88%91)` };
+  const task = await readSubmission(
+    event,
+    identity,
+    async (url) => {
+      read.push(url);
+      return { document_id: "Plan", content: "方案" };
+    },
+    plan,
+  );
+  assert.equal(task?.id, "feishu:om_first");
+  assert.deepEqual(read, [plan]);
+});

@@ -55,17 +55,24 @@ function intent(message: Message, identity: Identity) {
   return { id: "feishu:" + message.message_id, text };
 }
 
-export async function readSubmission(message: Message, identity: Identity, read: (url: string) => Promise<Document>) {
+export async function readSubmission(
+  message: Message,
+  identity: Identity,
+  read: (url: string) => Promise<Document>,
+  requiredLink?: string,
+) {
   const request = intent(message, identity);
   if (!request) return null;
   const links = new Set<string>();
-  for (const match of request.text.matchAll(/https:\/\/[^\s<>\u3000-\u303f\uff00-\uffef]+/giu)) {
+  for (const match of request.text.matchAll(/https:\/\/[^\s<>[\]()\u3000-\u303f\uff00-\uffef]+/giu)) {
     const link = match[0].replace(/[),.;!\]}]+$/, "");
     const parsed = new URL(link);
     if (!/(^|\.)(feishu\.cn|larksuite\.com)$/.test(parsed.hostname)) continue;
+    if (requiredLink && parsed.origin + parsed.pathname.replace(/\/$/, "") !== requiredLink) continue;
     if (!/^\/(docx|wiki)\//.test(parsed.pathname)) throw new Problem(400, "请附上可授权给机器人的飞书方案文档链接");
     links.add(canonicalLink(link));
   }
+  if (requiredLink && !links.size) return null;
   if (links.size > 8) throw new Problem(400, "一次最多提交八份飞书资料");
   const files = [];
   for (const url of links) {
@@ -230,11 +237,15 @@ export async function listenFeishu(
       try {
         let result = known(request.id);
         if (!result) {
-          const received = await readSubmission(event, config, async (url) => {
-            if (route?.link && url !== route.link) throw new Problem(400, "当前接单规则只接受指定的方案文档");
-            const data = await cli(["docs", "+fetch", "--doc", url, "--doc-format", "markdown", "--as", "bot"]);
-            return data.document;
-          });
+          const received = await readSubmission(
+            event,
+            config,
+            async (url) => {
+              const data = await cli(["docs", "+fetch", "--doc", url, "--doc-format", "markdown", "--as", "bot"]);
+              return data.document;
+            },
+            route?.link,
+          );
           if (!received) continue;
           const text = route?.instruction
             ? route.instruction + "\n\n本人在飞书提交的要求：\n" + received.text
