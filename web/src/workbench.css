@@ -326,7 +326,15 @@ body:has(.console, .board) {
 .personal-file { margin-top: 7px; padding-top: 7px; border-top: 1px solid var(--edge); }
 .personal-file > span { min-width: 0; overflow-wrap: anywhere; }
 .personal-file small { display: block; color: var(--quiet); margin-top: 2px; }
+.personal-task-id { overflow-wrap: anywhere; }
 .personal-file button { flex: none; }
+.personal-catalog, .personal-lookup { padding: 9px 11px; border: 1px solid var(--edge); border-radius: 6px; font-size: 12px; }
+.personal-catalog summary, .personal-lookup summary { cursor: pointer; }
+.personal-intake .personal-catalog-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: baseline; margin-top: 7px; overflow-wrap: anywhere; }
+.personal-catalog-item small { color: var(--quiet); }
+.personal-lookup { margin: 0 0 12px; }
+.personal-lookup form { display: flex; gap: 7px; margin-top: 8px; }
+.personal-lookup input { min-width: 0; flex: 1; padding: 6px 8px; border: 1px solid var(--edge); border-radius: 4px; background: var(--surface); color: var(--ink); }
 .personal-intake { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding: 15px; margin: 0 0 16px; border: 1px solid var(--edge); border-radius: 8px; background: var(--town-layer, var(--surface-raised)); }
 .personal-intake-title { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .personal-intake-title h3 { font-size: 16px; margin: 0; }

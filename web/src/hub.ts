@@ -178,6 +178,8 @@ export const fetchPersonalTasks = (signal: AbortSignal) =>
   }>("/local/personal/tasks", { signal });
 export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
   call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });
+export const fetchPersonalKnowledge = (signal: AbortSignal) =>
+  call<{ id: string; name: string; bytes: number }[]>("/local/personal/knowledge", { signal });
 export const submitPersonalTask = (task: {
   id: string;
   text: string;
@@ -186,6 +188,7 @@ export const submitPersonalTask = (task: {
   node: string;
   agent: string;
   review: boolean;
+  knowledge?: string[];
 }) => post<{ id: string; state: string }>("/local/personal/tasks", task, 75000);
 export async function downloadPersonalFile(task: string, id: string, name: string) {
   const session = key.value;

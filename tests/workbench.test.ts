@@ -29,6 +29,10 @@ test("personal submission requires the local session and forwards only the valid
   const received: unknown[] = [];
   const backend = createServer(async (req, res) => {
     assert.equal(req.headers.authorization, "Bearer personal-private-key");
+    if (req.url === "/personal/knowledge" && req.method === "GET") {
+      res.setHeader("content-type", "application/json");
+      return res.end(JSON.stringify([{ id: "b".repeat(64), name: "模板.md", bytes: 100 }]));
+    }
     assert.equal(req.url, "/personal/tasks");
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(chunk);
@@ -62,6 +66,10 @@ test("personal submission requires the local session and forwards only the valid
     const session = await (await fetch(address + "/local-session.js")).text();
     assert.ok(!session.includes("personal-private-key"));
     assert.match(session, /"personalIntake":true/);
+    const lookup = address + "/local/personal/knowledge";
+    assert.equal((await fetch(lookup)).status, 401);
+    const catalog = await fetch(lookup, { headers: { authorization: "Bearer " + token } });
+    assert.deepEqual(await catalog.json(), [{ id: "b".repeat(64), name: "模板.md", bytes: 100 }]);
   } finally {
     for (const server of [client, backend]) {
       server.closeAllConnections();

@@ -1,6 +1,7 @@
 import { computed, defineComponent, onMounted, onUnmounted, ref } from "vue";
 import {
   downloadPersonalFile,
+  fetchPersonalKnowledge,
   fetchPersonalTask,
   fetchPersonalTasks,
   key,
@@ -59,6 +60,11 @@ export const Personal = defineComponent({
     const message = ref("");
     const notice = ref("");
     const downloadMessage = ref("");
+    const taskNumber = ref("");
+    const lookupMessage = ref("");
+    const catalog = ref<Awaited<ReturnType<typeof fetchPersonalKnowledge>>>();
+    const catalogError = ref("");
+    const chosenKnowledge = ref<string[]>([]);
     const filter = ref<TaskView>();
     const taskText = ref("");
     const link = ref("");
@@ -72,6 +78,9 @@ export const Personal = defineComponent({
     const groups = computed(() => {
       const result: Record<TaskView, PersonalTask[]> = { active: [], attention: [], archive: [] };
       for (const task of view.value?.tasks ?? []) result[viewFor(task.state)].push(task);
+      if (detail.value && !view.value?.tasks.some((task) => task.id === detail.value?.id)) {
+        result[viewFor(detail.value.state)].unshift(detail.value);
+      }
       return result;
     });
     const tab = computed(() => filter.value ?? views.find((view) => groups.value[view.id].length)?.id ?? "active");
@@ -121,7 +130,19 @@ export const Personal = defineComponent({
         if (alive()) timer = setTimeout(() => void refresh(), 3000);
       }
     };
-    onMounted(() => void refresh());
+    const loadCatalog = async () => {
+      catalogError.value = "";
+      try {
+        const listing = await fetchPersonalKnowledge(lifetime.signal);
+        if (alive()) catalog.value = listing;
+      } catch {
+        if (alive()) catalogError.value = "共享资料暂时读不到。";
+      }
+    };
+    onMounted(() => {
+      void refresh();
+      if (local?.personalIntake) void loadCatalog();
+    });
     onUnmounted(() => {
       clearTimeout(timer);
       lifetime.abort();
@@ -131,6 +152,25 @@ export const Personal = defineComponent({
       detail.value = undefined;
       downloadMessage.value = "";
       void refresh();
+    };
+    const findTask = async (event: Event) => {
+      event.preventDefault();
+      const id = taskNumber.value.trim();
+      if (!/^personal-[a-f0-9]{24}$/.test(id)) {
+        lookupMessage.value = "请粘贴回执上的完整任务编号。";
+        return;
+      }
+      lookupMessage.value = "正在查找…";
+      try {
+        const found = await fetchPersonalTask(id, lifetime.signal);
+        if (!alive() || taskNumber.value.trim() !== id) return;
+        detail.value = found;
+        chosen.value = found.id;
+        filter.value = viewFor(found.state);
+        downloadMessage.value = lookupMessage.value = "";
+      } catch {
+        if (alive() && taskNumber.value.trim() === id) lookupMessage.value = "无法打开这条任务，请核对编号后重试。";
+      }
     };
     const submit = async (event: Event) => {
       event.preventDefault();
@@ -147,14 +187,16 @@ export const Personal = defineComponent({
           node,
           agent,
           review: review.value,
+          knowledge: chosenKnowledge.value,
         });
         if (!alive()) return;
         chosen.value = result.id;
         detail.value = undefined;
         downloadMessage.value = "";
         filter.value = viewFor(result.state);
-        notice.value = "任务已保存到服务器。执行电脑在线后开始处理，成果会出现在下方。";
+        notice.value = `已收到任务 ${result.id}。执行电脑在线后开始处理，成果会出现在任务详情里。`;
         taskText.value = link.value = plan.value = "";
+        chosenKnowledge.value = [];
         submission = crypto.randomUUID();
         await refresh();
       } catch (error) {
@@ -244,6 +286,43 @@ export const Personal = defineComponent({
                     )}
                   </select>
                 </label>
+                <details class="personal-wide personal-catalog">
+                  <summary>
+                    选择共享资料 {chosenKnowledge.value.length ? `（已选 ${chosenKnowledge.value.length}）` : ""}
+                  </summary>
+                  {catalogError.value && (
+                    <p role="status">
+                      {catalogError.value}{" "}
+                      <button type="button" class="word" onClick={loadCatalog}>
+                        重试
+                      </button>
+                    </p>
+                  )}
+                  {!catalogError.value && !catalog.value && <p>正在读取共享资料…</p>}
+                  {catalog.value?.length === 0 && <p>暂无共享资料。</p>}
+                  {catalog.value?.map((file) => (
+                    <label class="personal-catalog-item" key={file.id}>
+                      <input
+                        type="checkbox"
+                        disabled={
+                          sending.value ||
+                          (chosenKnowledge.value.length >= 31 && !chosenKnowledge.value.includes(file.id))
+                        }
+                        checked={chosenKnowledge.value.includes(file.id)}
+                        onChange={(event) => {
+                          if ((event.target as HTMLInputElement).checked)
+                            chosenKnowledge.value = [...chosenKnowledge.value, file.id];
+                          else chosenKnowledge.value = chosenKnowledge.value.filter((id) => id !== file.id);
+                          submission = crypto.randomUUID();
+                        }}
+                      />
+                      <span>{file.name}</span>
+                      <small>
+                        {size(file.bytes)} · {file.id.slice(0, 7)}
+                      </small>
+                    </label>
+                  ))}
+                </details>
                 <div class="personal-intake-actions personal-wide">
                   <label>
                     <input
@@ -275,6 +354,24 @@ export const Personal = defineComponent({
             )}
             {view.value && (
               <>
+                <details class="personal-lookup">
+                  <summary>用任务编号找成果</summary>
+                  <form onSubmit={findTask}>
+                    <input
+                      aria-label="任务编号"
+                      placeholder="粘贴任务编号"
+                      value={taskNumber.value}
+                      onInput={(event) => {
+                        taskNumber.value = (event.target as HTMLInputElement).value;
+                        lookupMessage.value = "";
+                      }}
+                    />
+                    <button class="word" type="submit">
+                      查找
+                    </button>
+                  </form>
+                  {lookupMessage.value && <p role="status">{lookupMessage.value}</p>}
+                </details>
                 <div class="personal-filters" role="group" aria-label="按任务状态查看">
                   {views.map((item) => (
                     <button
@@ -323,6 +420,9 @@ export const Personal = defineComponent({
                                   : ""}
                               </span>
                             </div>
+                            <p class="personal-task-id">
+                              任务编号 <code>{task.id}</code>
+                            </p>
                             {detail.value.files.length === 0 && <p>暂无可下载成果。</p>}
                             {detail.value.files.map((file) => (
                               <div class="personal-file" key={file.id}>

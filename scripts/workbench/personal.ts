@@ -25,6 +25,14 @@ export function createPersonalIntake(read?: ReturnType<typeof reader>, targets?:
     }
     if (targets && !targets.includes(value.node + "/" + value.agent))
       throw new IntakeError(409, "这个入口尚未配置所选执行器。");
+    const knowledge = value.knowledge === undefined ? [] : value.knowledge;
+    if (
+      !Array.isArray(knowledge) ||
+      knowledge.length > 32 ||
+      knowledge.some((id) => typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) ||
+      new Set(knowledge).size !== knowledge.length
+    )
+      throw new IntakeError(400, "请选择有效的共享资料版本。");
     let link = "",
       plan = "";
     try {
@@ -70,6 +78,7 @@ export function createPersonalIntake(read?: ReturnType<typeof reader>, targets?:
           ? "\n\n先保存草稿到 output/，通过回执 ask 请本人审核。收到审核意见后，读取 previous/ 中的上一轮成果再修改；审核前不要发布或发送。"
           : ""),
       files,
+      knowledge,
     };
   };
 }

@@ -26,15 +26,23 @@ test("manual intake validates before reading and snapshots one submitted source"
     { id: "" },
     { node: "../other" },
     { agent: "unavailable" },
+    { knowledge: ["not-a-version"] },
   ]) {
     await assert.rejects(intake({ ...input, ...change }));
     assert.equal(calls.length, 0);
   }
-  const task = await intake({ ...input, files: [{ name: "injected", data: "ignored" }], mode: "full" });
+  const template = "a".repeat(64);
+  const task = await intake({
+    ...input,
+    knowledge: [template],
+    files: [{ name: "injected", data: "ignored" }],
+    mode: "full",
+  });
   assert.equal(calls.length, 1);
   assert.equal(task.node, "desk");
   assert.equal(task.agent, "codex");
   assert.equal(task.files.length, 1);
+  assert.deepEqual(task.knowledge, [template]);
   assert.match(Buffer.from(task.files[0].data, "base64").toString(), /版本：3/);
   assert.match(task.text, /审核/);
   assert.ok(!task.text.includes("资料原文"));

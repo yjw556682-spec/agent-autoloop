@@ -157,7 +157,7 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
       const personalRoute = /^\/local\/personal\/tasks(?:\/personal-[a-f0-9]{24}(?:\/files\/[a-f0-9]{64})?)?$/.test(
         path,
       );
-      if (personal && req.method === "GET" && personalRoute) {
+      if (personal && req.method === "GET" && (personalRoute || path === "/local/personal/knowledge")) {
         if (!authorized(req, token)) return error(res, 401, "请先打开工作台会话。");
         const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
           headers: { authorization: "Bearer " + personal.key },
