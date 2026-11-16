@@ -59,6 +59,12 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 交互终端里直接输入数字回车；非交互终端运行 `agent-autoloop answer 1 2` 选择“绿色”。再跑 `agent-autoloop status`，就能看到它接上刚才的会话并显示“你选了绿色，试跑通过”，还有今天和最近 7 天的轮数、Token 和费用（[统计口径](skills/agent-autoloop/SKILL.md#看情况回答)）。
 
+## 网页工作台
+
+如果电脑已经在运行 Autoloop，可以单独打开新版网页，沿用现有规则、记录和通道。在仓库目录运行 `node scripts/workbench.ts`，用终端显示的完整会话链接打开。Windows 可用 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/open-workbench.ps1` 直接打开。
+
+工作台以像素小镇展示派单、卡片、Agent、历史和通知，保留谱线大屏、运行记录与经过、规则操作。接入已有中台、实训营链接入口和其他场景见[工作台使用说明](docs/workbench.md)；任务链路、版本差异和扩展边界见[系统架构](docs/workbench-architecture.md)。
+
 ## 一件事怎么转起来
 
 编号和上面的架构图一一对应：
@@ -127,7 +133,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 
 ## 拿来即用的场景模板
 
-每套模板都带规则、任务 Skill 和启用说明。
+每套模板都带规则或规则生成器，以及启用说明；需要独立任务 Skill 的模板一并提供。
 
 | 想做什么 | 已经封装好的流程 |
 |---|---|
@@ -137,6 +143,7 @@ Agent 结束了这一轮，问了你一个问题。它现在不占进程、不�
 | [用户反馈处理](examples/recipes/feedback/README.md) | 重读反馈当前状态、修复、交付核实、准备回复；需要决定时飞书问你，回答后继续 |
 | [网站巡检](examples/recipes/website-watch/README.md) | 每 5 分钟检查状态和关键内容，首次异常交给 Agent，持续异常不重复通知，恢复后更新原卡片 |
 | [飞书周报与业务摘要](examples/recipes/feishu-brief/README.md) | 周日 18 点按你的权限读汇报和指定表格，生成本地摘要；飞书只发简短摘要，完整稿留在本机 |
+| [实训营草稿团队](examples/recipes/bootcamp-team/README.md) | 只跟进主动提交的任务与方案，定时检查变更；统筹后分做 PPT、助教文档、海报，汇总后交本人审核 |
 | [PR 自动交付](skills/agent-autoloop/SKILL.md#交付流水线) | 打上 `deliver` 标签后，审查、等 CI、合并、等发布并核对线上版本 |
 
 **启用：** 打开对应说明，把任务 Skill 放进所用 Agent 的 skills 目录，把示例规则合入 `~/.agent-autoloop/rules.json`，替换电脑名和路径，再运行 `agent-autoloop check`。

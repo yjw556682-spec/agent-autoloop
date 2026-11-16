@@ -1,7 +1,8 @@
 // The app is two views of one session: the overview you work at, and the board you hang on a wall. The key decides
 // whether any of it shows.
 import { defineComponent, onUnmounted, ref, watch } from "vue";
-import { key, setKey } from "./hub";
+import { key, local } from "./hub";
+import { Dispatch } from "./dispatch";
 import { Board } from "./board";
 import { Login } from "./login";
 import { Overview } from "./overview";
@@ -12,7 +13,10 @@ export const App = defineComponent({
     const route = ref(location.hash);
     const onHash = () => (route.value = location.hash);
     window.addEventListener("hashchange", onHash);
-    onUnmounted(() => window.removeEventListener("hashchange", onHash));
+    onUnmounted(() => {
+      window.removeEventListener("hashchange", onHash);
+      stopSession();
+    });
     watch(
       key,
       (value) => {
@@ -23,6 +27,7 @@ export const App = defineComponent({
     );
     return () => {
       if (!key.value) return <Login />;
+      if (local?.personal && route.value.startsWith("#/dispatch")) return <Dispatch />;
       return route.value.startsWith("#/board") ? <Board /> : <Overview />;
     };
   },

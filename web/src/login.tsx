@@ -2,7 +2,7 @@
 // stand for the thing waiting on you, shown here at rest.
 import { ref } from "vue";
 import { defineComponent } from "vue";
-import { fetchState, setKey } from "./hub";
+import { fetchState, local, setKey } from "./hub";
 
 export const Login = defineComponent({
   setup() {
@@ -35,7 +35,7 @@ export const Login = defineComponent({
           class="word"
           type="password"
           autocomplete="off"
-          placeholder="本人的密钥"
+          placeholder={local ? "本机会话密钥" : "本人的密钥"}
           aria-label="本人的密钥"
           value={typed.value}
           onInput={(event) => (typed.value = (event.target as HTMLInputElement).value)}
@@ -46,8 +46,14 @@ export const Login = defineComponent({
         </button>
         <div class="err">{wrong.value ? "钥匙不对，或中台没连上。" : ""}</div>
         <div class="hint">
-          在装中台的电脑上运行 <b>agent-autoloop key new owner web</b>{" "}
-          拿一把自己的密钥，只显示一次。中台默认只听本机；要手机打开，把 hub.publicUrl 配成能访问的地址。
+          {local ? (
+            "请从「打开工作台」重新打开会话，或使用启动时显示的完整链接。"
+          ) : (
+            <>
+              在装中台的电脑上运行 <b>agent-autoloop key new owner web</b>{" "}
+              拿一把自己的密钥，只显示一次。中台默认只听本机；要手机打开，把 hub.publicUrl 配成能访问的地址。
+            </>
+          )}
         </div>
       </div>
     );
