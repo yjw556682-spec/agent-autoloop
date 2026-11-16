@@ -88,7 +88,8 @@ export async function prepareRun(device: Device, job: Run, dir: string) {
       issued.base !== baseUrl(endpoint.origin, device.allowLoopback) + "/v1" ||
       !issued.key ||
       !issued.model ||
-      (profile.model && issued.model !== profile.model)
+      (input.model && issued.model !== input.model) ||
+      (profile.models ? !profile.models.includes(issued.model) : profile.model && issued.model !== profile.model)
     )
       throw new Error("模型网关凭据无效");
     lease = issued;

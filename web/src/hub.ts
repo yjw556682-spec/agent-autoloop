@@ -158,6 +158,7 @@ export const submitBootcamp = (link: string, plan: string) =>
   post<{ message: string }>("/local/bootcamp", { link, plan }, 95_000);
 
 export type PersonalTask = {
+  model?: string;
   id: string;
   title?: string;
   node: string;
@@ -174,7 +175,11 @@ export type PersonalDetails = PersonalTask & {
 export const fetchPersonalTasks = (signal: AbortSignal) =>
   call<{
     tasks: PersonalTask[];
-    devices: { name: string; online: boolean; agents: { id: string; use: string; mode: string; model?: string }[] }[];
+    devices: {
+      name: string;
+      online: boolean;
+      agents: { id: string; use: string; mode: string; model?: string; models?: string[]; defaultModel?: string }[];
+    }[];
   }>("/local/personal/tasks", { signal });
 export const fetchPersonalTask = (id: string, signal: AbortSignal) =>
   call<PersonalDetails>("/local/personal/tasks/" + encodeURIComponent(id), { signal });
@@ -189,7 +194,51 @@ export const submitPersonalTask = (task: {
   agent: string;
   review: boolean;
   knowledge?: string[];
+  model?: string;
 }) => post<{ id: string; state: string }>("/local/personal/tasks", task, 75000);
+
+export type ModelProtocol = "chat" | "messages" | "responses";
+export type ModelProbe = {
+  model: string;
+  protocol: ModelProtocol;
+  ok: boolean;
+  checkedAt: string;
+  ms: number;
+  tokens: number;
+  text?: string;
+  error?: string;
+};
+export type GatewayView = {
+  configured: boolean;
+  connected: boolean;
+  defaultModel: string;
+  budget: number;
+  durationMinutes: number;
+  models: {
+    id: string;
+    label: string;
+    provider: string;
+    group: string;
+    protocols: ModelProtocol[];
+    available: boolean;
+    billing?: string;
+  }[];
+  bindings: { node: string; agent: string; use: string; model: string; models: string[] }[];
+  checks: ModelProbe[];
+  usage: {
+    days: number;
+    requests: number;
+    failed: number;
+    tokens: number;
+    usd: number;
+    models: { model: string; requests: number; tokens: number; usd: number }[];
+  } | null;
+};
+export const fetchGateway = (signal?: AbortSignal) => call<GatewayView>("/local/personal/gateway", { signal });
+export const setAgentModel = (node: string, agent: string, model: string) =>
+  post<{ ok: boolean }>("/local/personal/gateway/default", { node, agent, model });
+export const probeModel = (model: string, protocol: ModelProtocol, prompt: string) =>
+  post<ModelProbe>("/local/personal/gateway/probe", { model, protocol, prompt }, 85000);
 export async function downloadPersonalFile(task: string, id: string, name: string) {
   const session = key.value;
   const response = await fetch(

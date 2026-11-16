@@ -11,12 +11,26 @@ export const maxBytes = 24 * 1024 * 1024;
 export type Mode = "local" | "api";
 export const agentNames = { codex: "Codex", claude: "Claude Code", zcode: "ZCode" } as const;
 export type AgentKind = keyof typeof agentNames;
-export type Profile = { id: string; use: AgentKind; mode: Mode; model?: string; keywords?: string[] };
+export const modelName = /^[\w][\w./:-]{0,127}$/;
+export type Profile = {
+  id: string;
+  use: AgentKind;
+  mode: Mode;
+  model?: string;
+  models?: string[];
+  keywords?: string[];
+};
 export function supportsAgent(profile: Profile) {
   return (
     Object.hasOwn(agentNames, profile.use) &&
     (profile.mode === "api" || (profile.mode === "local" && profile.use !== "zcode")) &&
-    (profile.model === undefined || (typeof profile.model === "string" && /^[\w][\w./:-]{0,127}$/.test(profile.model)))
+    (profile.model === undefined || (typeof profile.model === "string" && modelName.test(profile.model))) &&
+    (profile.models === undefined ||
+      (profile.mode === "api" &&
+        Array.isArray(profile.models) &&
+        profile.models.length > 0 &&
+        profile.models.every((m) => typeof m === "string" && modelName.test(m)) &&
+        (!profile.model || profile.models.includes(profile.model))))
   );
 }
 export const agentId = (node: string, profile: string) => `personal-${node}--${profile}`;

@@ -49,4 +49,6 @@ test("manual intake validates before reading and snapshots one submitted source"
   assert.ok(!("mode" in task));
   await intake({ ...input, id: "plain", link: "", review: false });
   assert.equal(calls.length, 1);
+  assert.equal((await intake({ ...input, link: "", model: "minimax-m3.1-flash" })).model, "minimax-m3.1-flash");
+  await assert.rejects(intake({ ...input, model: { endpoint: "http://unexpected" } }));
 });

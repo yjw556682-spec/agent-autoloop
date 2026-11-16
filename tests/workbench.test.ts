@@ -25,6 +25,54 @@ let base: string;
 
 const origin = (server: typeof hub) => "http://127.0.0.1:" + (server.address() as AddressInfo).port;
 
+test("gateway changes require the owner session and reject cross-origin requests", async () => {
+  let calls = 0;
+  const backend = createServer((_req, res) => {
+    calls++;
+    res.setHeader("content-type", "application/json");
+    res.end('{"ok":true}');
+  }).listen(0, "127.0.0.1");
+  await once(backend, "listening");
+  const client = serveWorkbench({
+    home,
+    port: 0,
+    token,
+    personal: { port: (backend.address() as AddressInfo).port, key: "private-management" },
+  });
+  await once(client, "listening");
+  try {
+    const path = origin(client) + "/local/personal/gateway/default";
+    assert.equal((await fetch(path, { method: "POST", headers: { origin: origin(client) }, body: "{}" })).status, 401);
+    assert.equal(
+      (
+        await fetch(path, {
+          method: "POST",
+          headers: { authorization: "Bearer " + token, origin: "https://foreign.example" },
+          body: "{}",
+        })
+      ).status,
+      403,
+    );
+    assert.equal(calls, 0);
+    assert.equal(
+      (
+        await fetch(path, {
+          method: "POST",
+          headers: { authorization: "Bearer " + token, origin: origin(client) },
+          body: "{}",
+        })
+      ).status,
+      200,
+    );
+    assert.equal(calls, 1);
+  } finally {
+    for (const server of [client, backend]) {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+});
+
 test("personal submission requires the local session and forwards only the validated task", async () => {
   const received: unknown[] = [];
   const backend = createServer(async (req, res) => {

@@ -70,6 +70,11 @@ export const Personal = defineComponent({
     const link = ref("");
     const plan = ref("");
     const target = ref("");
+    const model = ref("");
+    const selectedAgent = computed(() => {
+      const [node, agent] = target.value.split("/");
+      return view.value?.devices.find((d) => d.name === node)?.agents.find((a) => a.id === agent);
+    });
     const review = ref(true);
     const sending = ref(false);
     let submission = crypto.randomUUID();
@@ -188,6 +193,7 @@ export const Personal = defineComponent({
           agent,
           review: review.value,
           knowledge: chosenKnowledge.value,
+          ...(selectedAgent.value?.mode === "api" && model.value && { model: model.value }),
         });
         if (!alive()) return;
         chosen.value = result.id;
@@ -270,6 +276,7 @@ export const Personal = defineComponent({
                     value={target.value}
                     onChange={(e) => {
                       target.value = (e.target as HTMLSelectElement).value;
+                      model.value = "";
                       submission = crypto.randomUUID();
                     }}
                   >
@@ -286,6 +293,27 @@ export const Personal = defineComponent({
                     )}
                   </select>
                 </label>
+                {selectedAgent.value?.mode === "api" && (
+                  <label>
+                    本次任务模型
+                    <select
+                      aria-label="本次任务模型"
+                      value={model.value}
+                      disabled={sending.value}
+                      onChange={(e) => {
+                        model.value = (e.target as HTMLSelectElement).value;
+                        submission = crypto.randomUUID();
+                      }}
+                    >
+                      <option value="">
+                        使用默认模型（{selectedAgent.value.defaultModel ?? selectedAgent.value.model ?? "服务器配置"}）
+                      </option>
+                      {selectedAgent.value.models?.map((id) => (
+                        <option value={id}>{id}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <details class="personal-wide personal-catalog">
                   <summary>
                     选择共享资料 {chosenKnowledge.value.length ? `（已选 ${chosenKnowledge.value.length}）` : ""}

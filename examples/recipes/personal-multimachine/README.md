@@ -73,6 +73,18 @@ node --disable-warning=ExperimentalWarning --test tests/personal-integration.tes
 
 ## Agent 接入方式
 
+### 模型中心与切换
+
+工作台“模型中心”显示服务器已配置的供应商、模型分组、接口测试和近 7 天网关用量。供应商原始密钥、LiteLLM 管理密钥、提示词及响应日志均不返回浏览器。页面试调用经服务器签发单模型临时密钥，成功或失败后都撤销；每次最多 512 输出 token，会消耗模型额度。失败或账目读取异常不展示成成功或零费用。
+
+`gateway.models` 可登记 `{id,label,provider,group,protocols,billing?}`。`protocols` 为 `chat`、`messages`、`responses`；必须由管理员先核实对应接口。`billing: "subscription"` 表示供应商订阅，网关估算费用不能代表实际套餐余量或额外账单。API 模型支持并不证明 Agent 工具调用已经验证。
+
+API Agent 的 `models` 配置为允许切换的模型列表，`model` 保留为初始默认值。设备端也应有同一允许列表。旧配置只有一个 `model` 时仍只允许该模型。工作台默认模型保存在服务器业务库中，只影响之后接受的任务。提交可选 `model`，任务保存选择快照，随后切换默认模型不会改变排队、执行、审核续办的该任务。正在执行的轮次不会自动换模型或换供应商。
+
+本人管理接口：`GET /personal/gateway`；`POST /personal/gateway/default` 接收 `{node,agent,model}`；`POST /personal/gateway/probe` 接收 `{model,protocol,prompt}`。工作台对应入口前缀为 `/local`，继续要求本人的浏览器会话与同源校验。设备身份不能访问这些管理接口。旧 `/v1` 中台协议不变。
+
+供应商通过 LiteLLM 的私有服务配置接入；每个供应商单独的环境文件只保存在服务器。新的 API 地址、密钥或任意请求路径不能从任务正文、外部文档或试调用表单注入。当前“切换”只开放已登记模型，不在网页里安装新供应商。
+
 | Agent | 凭据与权限 |
 | --- | --- |
 | Codex | 可用本机登录或统一 API 的 Responses 接口。启用临时会话和工作区沙箱，关闭工具网络访问；模型连接使用的代理不传入文件工具，避免 Windows 离线沙箱反复请求更新代理端口配置。Windows 首次运行需验证提升权限的沙箱可以启动。 |

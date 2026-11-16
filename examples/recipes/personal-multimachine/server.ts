@@ -9,6 +9,7 @@ import {
   hash,
   label,
   maxBytes,
+  modelName,
   number,
   Problem,
   supportsAgent,
@@ -18,6 +19,7 @@ import {
   type Run,
 } from "./data.ts";
 import { parseResult } from "../../../protocol/validate.ts";
+import type { GatewayModel, GatewayStatus, ModelProbe, ModelProtocol } from "./gateway.ts";
 
 export type DeviceRecord = { name: string; keyHash: string; agents: Profile[] };
 type Reply = { status: number; body: unknown };
@@ -30,6 +32,10 @@ export type Upstream = (
 ) => Promise<Reply>;
 export type Lease = { key: string; base: string; model: string };
 export type Gateway = {
+  models?: GatewayModel[];
+  defaultModel?: string;
+  status?: () => Promise<GatewayStatus>;
+  probe?: (model: string, protocol: ModelProtocol, prompt: string) => Promise<ModelProbe>;
   issue: (name: string, model?: string) => Promise<Lease>;
   revoke: (key: string) => Promise<void>;
 };
@@ -106,6 +112,8 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
   const db = new DatabaseSync(database);
   db.exec(`
     PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;
+    CREATE TABLE IF NOT EXISTS model_defaults (target TEXT PRIMARY KEY, model TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS model_checks (id TEXT PRIMARY KEY, result TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS tasks (
       id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, node TEXT NOT NULL, agent TEXT NOT NULL, mode TEXT NOT NULL,
       input TEXT NOT NULL, state TEXT NOT NULL, run INTEGER, created INTEGER NOT NULL
@@ -175,7 +183,8 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
       (value.mode !== undefined && value.mode !== "local" && value.mode !== "api") ||
       (value.use !== undefined && (typeof value.use !== "string" || !Object.hasOwn(agentNames, value.use))) ||
       (value.agent !== undefined && (typeof value.agent !== "string" || !label.test(value.agent))) ||
-      (value.node !== undefined && (typeof value.node !== "string" || !label.test(value.node)))
+      (value.node !== undefined && (typeof value.node !== "string" || !label.test(value.node))) ||
+      (value.model !== undefined && (typeof value.model !== "string" || !modelName.test(value.model)))
     )
       throw new Problem(400, "需要提交编号、任务说明和有效的执行方式");
     const inputFiles = files(value.files ?? []);
@@ -195,6 +204,7 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
         value.node ?? null,
         value.agent ?? null,
         ...(value.use === undefined ? [] : [value.use]),
+        ...(value.model === undefined ? [] : [{ model: value.model }]),
       ]),
     );
     const id = submissionId(value.id);
@@ -220,7 +230,8 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
               (!value.agent || agent.id === value.agent) &&
               (!value.use || agent.use === value.use) &&
               (!value.mode || agent.mode === value.mode) &&
-              (agent.mode === "local" || !!gateway),
+              (agent.mode === "local" || !!gateway) &&
+              (value.model === undefined || allowedModels(agent).includes(value.model)),
           );
         if (!candidates.length) throw new Problem(409, "没有支持这种执行方式的电脑");
         const description = value.text.toLowerCase();
@@ -238,7 +249,10 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
             agentId(a.device.name, a.agent.id).localeCompare(agentId(b.device.name, b.agent.id)),
         );
         const { device, agent } = candidates[0];
-        const input = JSON.stringify({ text: value.text, files: attachments, use: agent.use });
+        const model = agent.mode === "api" ? (value.model ?? defaultModel(device.name, agent)) : undefined;
+        if (model && gateway?.models && !allowedModels(agent).includes(model))
+          throw new Problem(409, "所选模型不可用于这个 Agent，请重新选择");
+        const input = JSON.stringify({ text: value.text, files: attachments, use: agent.use, ...(model && { model }) });
         db.exec("BEGIN IMMEDIATE");
         try {
           db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, 'dispatching', NULL, ?)").run(
@@ -440,7 +454,7 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
         let lease: Lease;
         if (claim.lease) lease = JSON.parse(claim.lease);
         else {
-          const model = device.agents.find((agent) => agent.id === task.agent)?.model;
+          const model = JSON.parse(task.input).model ?? device.agents.find((agent) => agent.id === task.agent)?.model;
           lease = await gateway.issue("autoloop-" + task.id + "-" + run + "-" + attempt, model);
           db.prepare("UPDATE claims SET lease = ? WHERE run = ? AND attempt = ?").run(
             JSON.stringify(lease),
@@ -517,6 +531,31 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     });
   }
 
+  function allowedModels(agent: Profile) {
+    if (agent.mode !== "api") return [];
+    const protocol = agent.use === "claude" ? "messages" : agent.use === "codex" ? "responses" : "chat";
+    const choices = agent.models ?? (agent.model ? [agent.model] : (gateway?.models?.map((m) => m.id) ?? []));
+    return choices.filter(
+      (id) => !gateway?.models || gateway.models.some((m) => m.id === id && m.protocols.includes(protocol)),
+    );
+  }
+  function defaultModel(node: string, agent: Profile): string | undefined {
+    const saved = db.prepare("SELECT model FROM model_defaults WHERE target=?").get(node + "/" + agent.id)?.model;
+    return typeof saved === "string" ? saved : (agent.model ?? gateway?.defaultModel);
+  }
+  function modelBindings() {
+    return devices.flatMap((d) =>
+      d.agents
+        .filter((a) => a.mode === "api")
+        .map((a) => ({
+          node: d.name,
+          agent: a.id,
+          use: a.use,
+          model: defaultModel(d.name, a),
+          models: allowedModels(a),
+        })),
+    );
+  }
   async function handle(req: IncomingMessage, res: ServerResponse) {
     const url = new URL(req.url!, "http://localhost");
     const key = bearer(req);
@@ -524,6 +563,40 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
     const path = url.pathname;
     if (method === "GET" && path === "/healthz") return json({ ok: true });
     if (key && equal(key, owner)) {
+      if (method === "GET" && path === "/personal/gateway") {
+        if (!gateway) return json({ configured: false, bindings: [] });
+        if (!gateway.status) throw new Problem(503, "当前网关尚不支持管理视图");
+        return json({
+          configured: true,
+          ...(await gateway.status()),
+          bindings: modelBindings(),
+          checks: db
+            .prepare("SELECT result FROM model_checks")
+            .all()
+            .map((x) => JSON.parse(String(x.result))),
+        });
+      }
+      if (method === "POST" && path === "/personal/gateway/default") {
+        const value = await body(req);
+        const agent = devices.find((d) => d.name === value?.node)?.agents.find((a) => a.id === value?.agent);
+        if (!gateway || !agent || !allowedModels(agent).includes(value?.model))
+          throw new Problem(409, "请选择这个 Agent 已接入的网关模型");
+        db.prepare(
+          "INSERT INTO model_defaults VALUES (?,?) ON CONFLICT(target) DO UPDATE SET model=excluded.model",
+        ).run(value.node + "/" + agent.id, value.model);
+        return json({ ok: true, bindings: modelBindings() });
+      }
+      if (method === "POST" && path === "/personal/gateway/probe") {
+        if (!gateway?.probe) throw new Problem(503, "当前网关尚不支持试调用");
+        const value = await body(req);
+        const result = await gateway.probe(value?.model, value?.protocol, value?.prompt);
+        const { text: _text, ...summary } = result;
+        db.prepare("INSERT INTO model_checks VALUES (?,?) ON CONFLICT(id) DO UPDATE SET result=excluded.result").run(
+          result.model + "/" + result.protocol,
+          JSON.stringify(summary),
+        );
+        return json(result);
+      }
       if (method === "POST" && path === "/personal/tasks") return submit(await body(req));
       if (method === "GET" && path === "/personal/knowledge")
         return json(
@@ -549,12 +622,15 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
           tasks: db
             .prepare(
               `SELECT id,node,agent,mode,state,run,created,json_extract(input, '$.use') AS use,
-          substr(json_extract(input, '$.text'), 1, 80) AS title FROM tasks ORDER BY created DESC LIMIT 100`,
+          json_extract(input, '$.model') AS model, substr(json_extract(input, '$.text'), 1, 80) AS title FROM tasks ORDER BY created DESC LIMIT 100`,
             )
             .all(),
           devices: devices.map(({ name, agents }) => ({
             name,
-            agents,
+            agents: agents.map((agent) => ({
+              ...agent,
+              ...(agent.mode === "api" && { models: allowedModels(agent), defaultModel: defaultModel(name, agent) }),
+            })),
             online: Date.now() - (seen.get(name)?.at ?? 0) < onlineFor,
           })),
         });
@@ -566,6 +642,7 @@ export function createPersonalServer({ database, owner, devices, upstream, gatew
           return json({
             ...task,
             use: JSON.parse(task.input).use,
+            model: JSON.parse(task.input).model,
             input: undefined,
             fingerprint: undefined,
             files: listFiles(task.id),

@@ -1,6 +1,6 @@
 import { collect, reader } from "../../examples/recipes/bootcamp-team/collect.ts";
 import { canonicalLink } from "../../examples/recipes/bootcamp-team/core.ts";
-import { label } from "../../examples/recipes/personal-multimachine/data.ts";
+import { label, modelName } from "../../examples/recipes/personal-multimachine/data.ts";
 import { IntakeError } from "./intake.ts";
 
 export function createPersonalIntake(read?: ReturnType<typeof reader>, targets?: string[]) {
@@ -19,7 +19,8 @@ export function createPersonalIntake(read?: ReturnType<typeof reader>, targets?:
       !label.test(value.agent) ||
       typeof value.review !== "boolean" ||
       typeof value.link !== "string" ||
-      (value.plan !== undefined && typeof value.plan !== "string")
+      (value.plan !== undefined && typeof value.plan !== "string") ||
+      (value.model !== undefined && (typeof value.model !== "string" || !modelName.test(value.model)))
     ) {
       throw new IntakeError(400, "请填写任务要求并选择执行电脑与 Agent。");
     }
@@ -72,6 +73,7 @@ export function createPersonalIntake(read?: ReturnType<typeof reader>, targets?:
       id: "workbench-" + value.id,
       node: value.node,
       agent: value.agent,
+      ...(value.model !== undefined && { model: value.model }),
       text:
         value.text.trim() +
         (value.review

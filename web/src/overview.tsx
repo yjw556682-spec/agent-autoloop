@@ -22,6 +22,7 @@ import { selected } from "./selection";
 import { createSubmission } from "./submission";
 import { Town } from "./town";
 import { Personal } from "./personal";
+import { Models } from "./models";
 
 const marks = computed(() => (state.value ? marksOf(state.value) : []));
 
@@ -355,7 +356,12 @@ export const Overview = defineComponent({
                 )}
               />
             )}
-            {all && local?.personal && <Personal />}
+            {all && local?.personal && (
+              <>
+                <Models />
+                <Personal />
+              </>
+            )}
             {!all && (
               <p class="bench-empty" role="status">
                 {loadError.value || "正在读取中台…"}

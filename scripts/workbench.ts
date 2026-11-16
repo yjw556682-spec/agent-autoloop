@@ -157,7 +157,11 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
       const personalRoute = /^\/local\/personal\/tasks(?:\/personal-[a-f0-9]{24}(?:\/files\/[a-f0-9]{64})?)?$/.test(
         path,
       );
-      if (personal && req.method === "GET" && (personalRoute || path === "/local/personal/knowledge")) {
+      if (
+        personal &&
+        req.method === "GET" &&
+        (personalRoute || path === "/local/personal/knowledge" || path === "/local/personal/gateway")
+      ) {
         if (!authorized(req, token)) return error(res, 401, "请先打开工作台会话。");
         const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
           headers: { authorization: "Bearer " + personal.key },
@@ -185,6 +189,7 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           RULE.test(path) ||
           path === "/v1/emit" ||
           (submitPersonal && path === "/local/personal/tasks") ||
+          (personal && ["/local/personal/gateway/default", "/local/personal/gateway/probe"].includes(path)) ||
           (bootcamp && path === "/local/bootcamp"));
       if (!read && !write) return error(res, 404, "没有这个地址。");
       if (!authorized(req, token)) return error(res, 401, "请用启动工作台时显示的会话链接打开。");
@@ -221,6 +226,16 @@ export function serveWorkbench({ home, port, token, bootcamp = false, personal }
           if (failure instanceof IntakeError) return error(res, failure.status, failure.message);
           throw failure;
         }
+      }
+      if (personal && ["/local/personal/gateway/default", "/local/personal/gateway/probe"].includes(path)) {
+        const response = await fetch("http://127.0.0.1:" + personal.port + path.slice("/local".length), {
+          method: "POST",
+          headers: { authorization: "Bearer " + personal.key, "content-type": "application/json" },
+          body,
+          redirect: "error",
+          signal: AbortSignal.any([gone.signal, AbortSignal.timeout(80_000)]),
+        });
+        return send(res, response.status, await response.text());
       }
       if (path === "/local/personal/tasks" && submitPersonal && personal) {
         let input: unknown;
